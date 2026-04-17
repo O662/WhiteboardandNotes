@@ -7,9 +7,9 @@ class WhiteboardLeftSidebar extends StatelessWidget {
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback onClear;
-  final VoidCallback onNew;
-  final VoidCallback onOpen;
-  final VoidCallback onSave;
+  final VoidCallback onInsert;
+  final VoidCallback onMath;
+  final bool mathPanelOpen;
 
   const WhiteboardLeftSidebar({
     super.key,
@@ -18,9 +18,9 @@ class WhiteboardLeftSidebar extends StatelessWidget {
     required this.onUndo,
     required this.onRedo,
     required this.onClear,
-    required this.onNew,
-    required this.onOpen,
-    required this.onSave,
+    required this.onInsert,
+    required this.onMath,
+    this.mathPanelOpen = false,
   });
 
   @override
@@ -75,18 +75,19 @@ class WhiteboardLeftSidebar extends StatelessWidget {
           ),
           _SideBtn(
             icon: Icons.functions_rounded,
-            tooltip: 'Math (coming soon)',
-            selected: selectedTool == DrawingTool.math,
-            onTap: () => onToolChanged(DrawingTool.math),
+            tooltip: 'Math',
+            selected: mathPanelOpen,
+            onTap: onMath,
           ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 6, horizontal: 10),
             child: Divider(height: 1),
           ),
-          _SideBtn(icon: Icons.add_rounded, tooltip: 'New board', onTap: onNew),
           _SideBtn(
-              icon: Icons.folder_open_outlined, tooltip: 'Open board', onTap: onOpen),
-          _SideBtn(icon: Icons.save_outlined, tooltip: 'Save board', onTap: onSave),
+            icon: Icons.add_box_outlined,
+            tooltip: 'Insert',
+            onTap: onInsert,
+          ),
         ],
       ),
     );

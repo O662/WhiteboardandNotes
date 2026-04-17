@@ -38,11 +38,23 @@ class WhiteboardPainter extends CustomPainter {
           _drawText(canvas, item);
         case StickyNoteItem():
           _drawStickyNote(canvas, item);
+        case ImageItem() ||
+              TableItem() ||
+              AttachmentItem() ||
+              LinkItem() ||
+              VideoItem() ||
+              PrintoutItem() ||
+              MathGraphItem():
+          break; // rendered as Flutter widget in the rich-item overlay
       }
     }
     if (activeStroke != null) _drawStroke(canvas, activeStroke!);
     if (selectedIndex != null && selectedIndex! < items.length) {
-      _drawSelection(canvas, items[selectedIndex!]);
+      final sel = items[selectedIndex!];
+      // Rich items draw their own selection border in the overlay widget
+      if (sel case StrokeItem() || TextItem() || StickyNoteItem()) {
+        _drawSelection(canvas, sel);
+      }
     }
   }
 
