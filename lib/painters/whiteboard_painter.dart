@@ -242,7 +242,6 @@ class WhiteboardPainter extends CustomPainter {
     const w = 200.0, h = 160.0;
     final x = item.position.dx, y = item.position.dy;
 
-    // shadow
     canvas.drawRRect(
       RRect.fromLTRBR(x + 3, y + 3, x + w + 3, y + h + 3,
           const Radius.circular(4)),
