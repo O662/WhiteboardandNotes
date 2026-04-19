@@ -18,6 +18,18 @@ sealed class WhiteboardItem {
             text: json['text'] as String,
             color: _colorFromInt(json['color'] as int),
             fontSize: (json['fontSize'] as num).toDouble(),
+            fontWeight: (json['bold'] as bool? ?? false) ? FontWeight.bold : FontWeight.normal,
+            fontStyle: (json['italic'] as bool? ?? false) ? FontStyle.italic : FontStyle.normal,
+            fontFamily: json['fontFamily'] as String? ?? '',
+            underline: json['underline'] as bool? ?? false,
+            strikethrough: json['strikethrough'] as bool? ?? false,
+            textAlign: TextAlign.values.firstWhere(
+              (a) => a.name == (json['textAlign'] as String? ?? 'left'),
+              orElse: () => TextAlign.left,
+            ),
+            indentLevel: json['indentLevel'] as int? ?? 0,
+            bullet: json['bullet'] as bool? ?? false,
+            lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.2,
           ),
         'stickyNote' => StickyNoteItem(
             position: Offset((json['x'] as num).toDouble(),
@@ -80,6 +92,31 @@ sealed class WhiteboardItem {
             width: (json['width'] as num).toDouble(),
             height: (json['height'] as num).toDouble(),
           ),
+        'shape' => ShapeItem(
+            position: Offset((json['x'] as num).toDouble(),
+                (json['y'] as num).toDouble()),
+            shapeType: ShapeType.values
+                .firstWhere((t) => t.name == json['shapeType']),
+            width: (json['width'] as num).toDouble(),
+            height: (json['height'] as num).toDouble(),
+            strokeColor: _colorFromInt(json['strokeColor'] as int),
+            strokeWidth: (json['strokeWidth'] as num).toDouble(),
+            filled: json['filled'] as bool? ?? false,
+            fillColor: _colorFromInt(
+                json['fillColor'] as int? ?? 0x00000000),
+          ),
+        'frame' => FrameItem(
+            position: Offset((json['x'] as num).toDouble(),
+                (json['y'] as num).toDouble()),
+            frameType: FrameType.values
+                .firstWhere((t) => t.name == json['frameType']),
+            background: FrameBackground.values
+                .firstWhere((b) => b.name == json['background'],
+                    orElse: () => FrameBackground.blank),
+            label: json['label'] as String?,
+            width: (json['width'] as num).toDouble(),
+            height: (json['height'] as num).toDouble(),
+          ),
         _ => throw FormatException('Unknown item type: ${json['type']}'),
       };
 }
@@ -127,18 +164,40 @@ final class TextItem extends WhiteboardItem {
   final String text;
   final Color color;
   final double fontSize;
+  final FontWeight fontWeight;
+  final FontStyle fontStyle;
+  final String fontFamily;
+  final bool underline;
+  final bool strikethrough;
+  final TextAlign textAlign;
+  final int indentLevel;
+  final bool bullet;
+  final double lineHeight;
 
   const TextItem({
     required this.position,
     required this.text,
     required this.color,
     this.fontSize = 20.0,
+    this.fontWeight = FontWeight.normal,
+    this.fontStyle = FontStyle.normal,
+    this.fontFamily = '',
+    this.underline = false,
+    this.strikethrough = false,
+    this.textAlign = TextAlign.left,
+    this.indentLevel = 0,
+    this.bullet = false,
+    this.lineHeight = 1.2,
   });
+
+  static const double indentStep = 24.0;
 
   @override
   Rect get bounds {
-    final approxW = (text.length * fontSize * 0.55 + 16).clamp(40.0, 480.0);
-    final approxH = fontSize * 1.6 + 8;
+    final indent = indentLevel * indentStep + (bullet ? 20.0 : 0.0);
+    final approxW = (text.length * fontSize * 0.55 + 16 + indent).clamp(40.0, 480.0);
+    final lineCount = '\n'.allMatches(text).length + 1;
+    final approxH = fontSize * lineHeight * lineCount + 8;
     return Rect.fromLTWH(position.dx, position.dy, approxW, approxH);
   }
 
@@ -148,6 +207,15 @@ final class TextItem extends WhiteboardItem {
         text: text,
         color: color,
         fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+        fontFamily: fontFamily,
+        underline: underline,
+        strikethrough: strikethrough,
+        textAlign: textAlign,
+        indentLevel: indentLevel,
+        bullet: bullet,
+        lineHeight: lineHeight,
       );
 
   @override
@@ -158,6 +226,15 @@ final class TextItem extends WhiteboardItem {
         'text': text,
         'color': _colorToInt(color),
         'fontSize': fontSize,
+        'bold': fontWeight == FontWeight.bold,
+        'italic': fontStyle == FontStyle.italic,
+        'fontFamily': fontFamily,
+        'underline': underline,
+        'strikethrough': strikethrough,
+        'textAlign': textAlign.name,
+        'indentLevel': indentLevel,
+        'bullet': bullet,
+        'lineHeight': lineHeight,
       };
 }
 
@@ -492,6 +569,229 @@ final class MathGraphItem extends WhiteboardItem {
         'x': position.dx,
         'y': position.dy,
         'graphType': graphType.name,
+        'width': width,
+        'height': height,
+      };
+}
+
+// ── Shape item ─────────────────────────────────────────────────────────────
+
+enum ShapeType {
+  rectangle,
+  ellipse,
+  triangle,
+  diamond,
+  star,
+  hexagon,
+  arrow,
+  line,
+}
+
+final class ShapeItem extends WhiteboardItem {
+  final Offset position;
+  final ShapeType shapeType;
+  final double width;
+  final double height;
+  final Color strokeColor;
+  final double strokeWidth;
+  final bool filled;
+  final Color fillColor;
+
+  const ShapeItem({
+    required this.position,
+    required this.shapeType,
+    required this.width,
+    required this.height,
+    required this.strokeColor,
+    this.strokeWidth = 2.0,
+    this.filled = false,
+    this.fillColor = const Color(0x00000000),
+  });
+
+  static String labelFor(ShapeType t) => switch (t) {
+        ShapeType.rectangle => 'Rectangle',
+        ShapeType.ellipse => 'Ellipse',
+        ShapeType.triangle => 'Triangle',
+        ShapeType.diamond => 'Diamond',
+        ShapeType.star => 'Star',
+        ShapeType.hexagon => 'Hexagon',
+        ShapeType.arrow => 'Arrow',
+        ShapeType.line => 'Line',
+      };
+
+  static double defaultWidth(ShapeType t) => switch (t) {
+        ShapeType.arrow => 300,
+        ShapeType.line => 300,
+        _ => 200,
+      };
+
+  static double defaultHeight(ShapeType t) => switch (t) {
+        ShapeType.arrow => 140,
+        ShapeType.line => 0,
+        _ => 200,
+      };
+
+  @override
+  Rect get bounds => shapeType == ShapeType.line
+      ? Rect.fromLTWH(position.dx, position.dy - strokeWidth / 2,
+          width, strokeWidth + 8)
+      : Rect.fromLTWH(position.dx, position.dy, width, height);
+
+  @override
+  ShapeItem movedBy(Offset delta) => ShapeItem(
+        position: position + delta,
+        shapeType: shapeType,
+        width: width,
+        height: height,
+        strokeColor: strokeColor,
+        strokeWidth: strokeWidth,
+        filled: filled,
+        fillColor: fillColor,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'shape',
+        'x': position.dx,
+        'y': position.dy,
+        'shapeType': shapeType.name,
+        'width': width,
+        'height': height,
+        'strokeColor': _colorToInt(strokeColor),
+        'strokeWidth': strokeWidth,
+        'filled': filled,
+        'fillColor': _colorToInt(fillColor),
+      };
+}
+
+// ── Frame item ─────────────────────────────────────────────────────────────
+
+enum FrameType {
+  a4Portrait,
+  a4Landscape,
+  letter,
+  letterLandscape,
+  ratio16x9,
+  ratio4x3,
+  ratio1x1,
+  mobile,
+  tablet,
+  desktop,
+  noteLined,
+  noteBlank,
+  noteDotted,
+  noteGrid,
+  graphPaper,
+}
+
+enum FrameBackground { blank, lined, dotted, grid, graphPaper }
+
+final class FrameItem extends WhiteboardItem {
+  final Offset position;
+  final double width;
+  final double height;
+  final FrameType frameType;
+  final FrameBackground background;
+  final String label;
+
+  FrameItem({
+    required this.position,
+    required this.frameType,
+    double? width,
+    double? height,
+    FrameBackground? background,
+    String? label,
+  })  : width = width ?? defaultWidth(frameType),
+        height = height ?? defaultHeight(frameType),
+        background = background ?? defaultBackground(frameType),
+        label = label ?? labelFor(frameType);
+
+  static double defaultWidth(FrameType t) => switch (t) {
+        FrameType.a4Portrait => 595,
+        FrameType.a4Landscape => 842,
+        FrameType.letter => 612,
+        FrameType.letterLandscape => 792,
+        FrameType.ratio16x9 => 960,
+        FrameType.ratio4x3 => 800,
+        FrameType.ratio1x1 => 600,
+        FrameType.mobile => 390,
+        FrameType.tablet => 768,
+        FrameType.desktop => 1280,
+        FrameType.noteLined ||
+        FrameType.noteBlank ||
+        FrameType.noteDotted ||
+        FrameType.noteGrid =>
+          595,
+        FrameType.graphPaper => 600,
+      };
+
+  static double defaultHeight(FrameType t) => switch (t) {
+        FrameType.a4Portrait => 842,
+        FrameType.a4Landscape => 595,
+        FrameType.letter => 792,
+        FrameType.letterLandscape => 612,
+        FrameType.ratio16x9 => 540,
+        FrameType.ratio4x3 => 600,
+        FrameType.ratio1x1 => 600,
+        FrameType.mobile => 844,
+        FrameType.tablet => 1024,
+        FrameType.desktop => 800,
+        FrameType.noteLined ||
+        FrameType.noteBlank ||
+        FrameType.noteDotted ||
+        FrameType.noteGrid =>
+          842,
+        FrameType.graphPaper => 600,
+      };
+
+  static FrameBackground defaultBackground(FrameType t) => switch (t) {
+        FrameType.noteLined => FrameBackground.lined,
+        FrameType.noteDotted => FrameBackground.dotted,
+        FrameType.noteGrid => FrameBackground.grid,
+        FrameType.graphPaper => FrameBackground.graphPaper,
+        _ => FrameBackground.blank,
+      };
+
+  static String labelFor(FrameType t) => switch (t) {
+        FrameType.a4Portrait => 'A4',
+        FrameType.a4Landscape => 'A4 Landscape',
+        FrameType.letter => 'Letter',
+        FrameType.letterLandscape => 'Letter Landscape',
+        FrameType.ratio16x9 => '16 : 9',
+        FrameType.ratio4x3 => '4 : 3',
+        FrameType.ratio1x1 => '1 : 1',
+        FrameType.mobile => 'Mobile',
+        FrameType.tablet => 'Tablet',
+        FrameType.desktop => 'Desktop',
+        FrameType.noteLined => 'Note — Lined',
+        FrameType.noteBlank => 'Note — Blank',
+        FrameType.noteDotted => 'Note — Dotted',
+        FrameType.noteGrid => 'Note — Grid',
+        FrameType.graphPaper => 'Graph Paper',
+      };
+
+  @override
+  Rect get bounds =>
+      Rect.fromLTWH(position.dx, position.dy - 28, width, height + 28);
+
+  @override
+  FrameItem movedBy(Offset delta) => FrameItem(
+        position: position + delta,
+        frameType: frameType,
+        width: width,
+        height: height,
+        background: background,
+        label: label,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'frame',
+        'x': position.dx,
+        'y': position.dy,
+        'frameType': frameType.name,
+        'background': background.name,
+        'label': label,
         'width': width,
         'height': height,
       };

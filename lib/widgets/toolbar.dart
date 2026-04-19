@@ -9,6 +9,9 @@ class WhiteboardToolbar extends StatelessWidget {
   final ValueChanged<Color> onColorChanged;
   final ValueChanged<double> onStrokeWidthChanged;
 
+  final VoidCallback onAddRuler;
+  final VoidCallback onClearRulers;
+
   const WhiteboardToolbar({
     super.key,
     required this.selectedTool,
@@ -17,6 +20,8 @@ class WhiteboardToolbar extends StatelessWidget {
     required this.onToolChanged,
     required this.onColorChanged,
     required this.onStrokeWidthChanged,
+    required this.onAddRuler,
+    required this.onClearRulers,
   });
 
   static const _quickColors = [
@@ -91,12 +96,13 @@ class WhiteboardToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final drawingTools = [
+    const preSelectTools = [
       (DrawingTool.pan, Icons.open_with_rounded, 'Pan'),
       (DrawingTool.pen, Icons.edit_rounded, 'Pen'),
       (DrawingTool.highlighter, Icons.highlight_rounded, 'Highlighter'),
-      (DrawingTool.eraser, Icons.auto_fix_normal_rounded, 'Eraser'),
-      (DrawingTool.select, Icons.touch_app_rounded, 'Select'),
+    ];
+    const postSelectTools = [
+      (DrawingTool.text, Icons.title_rounded, 'Text'),
     ];
 
     return Container(
@@ -114,14 +120,26 @@ class WhiteboardToolbar extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Drawing tools
-          for (final (tool, icon, tip) in drawingTools)
+          // Pan, Pen, Highlighter
+          for (final (tool, icon, tip) in preSelectTools)
             _ToolBtn(
               icon: icon,
               tooltip: tip,
               selected: selectedTool == tool,
               onTap: () => onToolChanged(tool),
             ),
+          // Select / Lasso Select
+          _SelectBtn(selectedTool: selectedTool, onToolChanged: onToolChanged),
+          // Text
+          for (final (tool, icon, tip) in postSelectTools)
+            _ToolBtn(
+              icon: icon,
+              tooltip: tip,
+              selected: selectedTool == tool,
+              onTap: () => onToolChanged(tool),
+            ),
+          // Eraser group
+          _EraserBtn(selectedTool: selectedTool, onToolChanged: onToolChanged),
           _divider(),
           // Quick color swatches
           for (final color in _quickColors)
@@ -176,6 +194,14 @@ class WhiteboardToolbar extends StatelessWidget {
               onChanged: onStrokeWidthChanged,
               activeColor: Colors.blue,
             ),
+          ),
+          _divider(),
+          // Ruler
+          _RulerBtn(
+            selectedTool: selectedTool,
+            onToolChanged: onToolChanged,
+            onAddRuler: onAddRuler,
+            onClearRulers: onClearRulers,
           ),
         ],
       ),
@@ -254,6 +280,215 @@ class _SizePreset extends StatelessWidget {
               shape: BoxShape.circle,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SelectBtn extends StatelessWidget {
+  final DrawingTool selectedTool;
+  final ValueChanged<DrawingTool> onToolChanged;
+
+  const _SelectBtn({required this.selectedTool, required this.onToolChanged});
+
+  bool get _isActive =>
+      selectedTool == DrawingTool.select ||
+      selectedTool == DrawingTool.lassoSelect;
+
+  IconData get _icon => selectedTool == DrawingTool.lassoSelect
+      ? Icons.gesture_rounded
+      : Icons.touch_app_rounded;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<DrawingTool>(
+      tooltip: 'Select',
+      padding: EdgeInsets.zero,
+      onSelected: onToolChanged,
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: DrawingTool.select,
+          child: Row(children: [
+            Icon(Icons.touch_app_rounded, size: 18,
+                color: selectedTool == DrawingTool.select
+                    ? Colors.blue
+                    : Colors.black87),
+            const SizedBox(width: 10),
+            Text('Select',
+                style: TextStyle(
+                    color: selectedTool == DrawingTool.select
+                        ? Colors.blue
+                        : Colors.black87,
+                    fontWeight: selectedTool == DrawingTool.select
+                        ? FontWeight.w600
+                        : FontWeight.normal)),
+          ]),
+        ),
+        PopupMenuItem(
+          value: DrawingTool.lassoSelect,
+          child: Row(children: [
+            Icon(Icons.gesture_rounded, size: 18,
+                color: selectedTool == DrawingTool.lassoSelect
+                    ? Colors.blue
+                    : Colors.black87),
+            const SizedBox(width: 10),
+            Text('Lasso Select',
+                style: TextStyle(
+                    color: selectedTool == DrawingTool.lassoSelect
+                        ? Colors.blue
+                        : Colors.black87,
+                    fontWeight: selectedTool == DrawingTool.lassoSelect
+                        ? FontWeight.w600
+                        : FontWeight.normal)),
+          ]),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: _isActive ? Colors.blue.withAlpha(30) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(_icon, size: 20,
+            color: _isActive ? Colors.blue : Colors.black87),
+      ),
+    );
+  }
+}
+
+class _EraserBtn extends StatelessWidget {
+  final DrawingTool selectedTool;
+  final ValueChanged<DrawingTool> onToolChanged;
+
+  const _EraserBtn({required this.selectedTool, required this.onToolChanged});
+
+  static const _eraserTools = [
+    (DrawingTool.strokeEraser, Icons.auto_fix_normal_rounded, 'Eraser'),
+    (DrawingTool.eraser, Icons.opacity, 'Transparent Pen'),
+    (DrawingTool.lineDelete, Icons.remove_circle_outline_rounded, 'Delete Stroke'),
+  ];
+
+  bool get _isActive =>
+      selectedTool == DrawingTool.eraser ||
+      selectedTool == DrawingTool.strokeEraser ||
+      selectedTool == DrawingTool.lineDelete;
+
+  IconData get _icon {
+    for (final (tool, icon, _) in _eraserTools) {
+      if (tool == selectedTool) return icon;
+    }
+    return Icons.auto_fix_normal_rounded;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(
+        popupMenuTheme: PopupMenuThemeData(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20)),
+          elevation: 4,
+          color: Colors.white,
+        ),
+      ),
+      child: PopupMenuButton<DrawingTool>(
+        tooltip: 'Eraser',
+        padding: EdgeInsets.zero,
+        onSelected: onToolChanged,
+        itemBuilder: (_) => [
+          for (final (tool, icon, label) in _eraserTools)
+            PopupMenuItem(
+              value: tool,
+              child: Row(children: [
+                Icon(icon, size: 18,
+                    color: selectedTool == tool ? Colors.blue : Colors.black87),
+                const SizedBox(width: 10),
+                Text(label,
+                    style: TextStyle(
+                        color: selectedTool == tool ? Colors.blue : Colors.black87,
+                        fontWeight: selectedTool == tool
+                            ? FontWeight.w600
+                            : FontWeight.normal)),
+              ]),
+            ),
+        ],
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: _isActive ? Colors.blue.withAlpha(30) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(_icon, size: 20,
+              color: _isActive ? Colors.blue : Colors.black87),
+        ),
+      ),
+    );
+  }
+}
+
+class _RulerBtn extends StatelessWidget {
+  final DrawingTool selectedTool;
+  final ValueChanged<DrawingTool> onToolChanged;
+  final VoidCallback onAddRuler;
+  final VoidCallback onClearRulers;
+
+  const _RulerBtn({
+    required this.selectedTool,
+    required this.onToolChanged,
+    required this.onAddRuler,
+    required this.onClearRulers,
+  });
+
+  bool get _isActive => selectedTool == DrawingTool.ruler;
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(
+        popupMenuTheme: PopupMenuThemeData(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 4,
+          color: Colors.white,
+        ),
+      ),
+      child: PopupMenuButton<String>(
+        tooltip: 'Ruler',
+        padding: EdgeInsets.zero,
+        onSelected: (value) {
+          if (value == 'add') {
+            onToolChanged(DrawingTool.ruler);
+            onAddRuler();
+          } else if (value == 'clear') {
+            onClearRulers();
+          }
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(
+            value: 'add',
+            child: Row(children: [
+              Icon(Icons.add_rounded, size: 18, color: Colors.black87),
+              SizedBox(width: 10),
+              Text('Add Ruler'),
+            ]),
+          ),
+          PopupMenuItem(
+            value: 'clear',
+            child: Row(children: [
+              Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
+              SizedBox(width: 10),
+              Text('Clear All', style: TextStyle(color: Colors.red)),
+            ]),
+          ),
+        ],
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: _isActive ? Colors.blue.withAlpha(30) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(Icons.straighten_rounded, size: 20,
+              color: _isActive ? Colors.blue : Colors.black87),
         ),
       ),
     );

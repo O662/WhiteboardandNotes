@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import '../models/stroke.dart';
 import '../models/whiteboard_item.dart';
@@ -30,6 +32,13 @@ class WhiteboardPainter extends CustomPainter {
       Paint()..color = Colors.white,
     );
     _drawBackground(canvas);
+    // Frame items sit below the ink layer so strokes can be drawn on top.
+    for (final item in items) {
+      if (item is FrameItem) _drawFrameItem(canvas, item);
+    }
+    // Save a layer so eraser strokes (BlendMode.clear) punch holes in the
+    // ink layer rather than painting white over the background pattern.
+    canvas.saveLayer(null, Paint());
     for (final item in items) {
       switch (item) {
         case StrokeItem(:final stroke):
@@ -38,6 +47,10 @@ class WhiteboardPainter extends CustomPainter {
           _drawText(canvas, item);
         case StickyNoteItem():
           _drawStickyNote(canvas, item);
+        case ShapeItem():
+          _drawShapeItem(canvas, item);
+        case FrameItem():
+          break; // drawn before saveLayer
         case ImageItem() ||
               TableItem() ||
               AttachmentItem() ||
@@ -49,10 +62,11 @@ class WhiteboardPainter extends CustomPainter {
       }
     }
     if (activeStroke != null) _drawStroke(canvas, activeStroke!);
+    canvas.restore();
     if (selectedIndex != null && selectedIndex! < items.length) {
       final sel = items[selectedIndex!];
       // Rich items draw their own selection border in the overlay widget
-      if (sel case StrokeItem() || TextItem() || StickyNoteItem()) {
+      if (sel case StrokeItem() || TextItem() || StickyNoteItem() || FrameItem() || ShapeItem()) {
         _drawSelection(canvas, sel);
       }
     }
@@ -135,6 +149,246 @@ class WhiteboardPainter extends CustomPainter {
     }
   }
 
+  void _drawFrameItem(Canvas canvas, FrameItem item) {
+    final rect = Rect.fromLTWH(
+        item.position.dx, item.position.dy, item.width, item.height);
+
+    // Drop shadow
+    canvas.drawRect(
+      rect.translate(3, 4),
+      Paint()
+        ..color = Colors.black.withAlpha(18)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+    );
+
+    // White background
+    canvas.drawRect(rect, Paint()..color = Colors.white);
+
+    // Template pattern (clipped to frame)
+    canvas.save();
+    canvas.clipRect(rect);
+    _drawFrameTemplate(canvas, item, rect);
+    canvas.restore();
+
+    // Border
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = const Color(0xFFBBBBBB)
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke,
+    );
+
+    // Label above the frame
+    final tp = TextPainter(
+      text: TextSpan(
+        text: item.label,
+        style: const TextStyle(
+          color: Color(0xFF666666),
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    tp.layout();
+    tp.paint(canvas, Offset(item.position.dx, item.position.dy - 22));
+  }
+
+  void _drawFrameTemplate(Canvas canvas, FrameItem item, Rect rect) {
+    switch (item.background) {
+      case FrameBackground.blank:
+        return;
+      case FrameBackground.lined:
+        _drawLinedTemplate(canvas, rect);
+      case FrameBackground.dotted:
+        _drawDottedTemplate(canvas, rect);
+      case FrameBackground.grid:
+        _drawGridTemplate(canvas, rect);
+      case FrameBackground.graphPaper:
+        _drawGraphPaperTemplate(canvas, rect);
+    }
+  }
+
+  void _drawLinedTemplate(Canvas canvas, Rect rect) {
+    const spacing = 32.0;
+    // Pink margin line
+    canvas.drawLine(
+      Offset(rect.left + 64, rect.top),
+      Offset(rect.left + 64, rect.bottom),
+      Paint()
+        ..color = const Color(0xFFFFCDD2)
+        ..strokeWidth = 1.2,
+    );
+    // Ruled lines
+    final linePaint = Paint()
+      ..color = const Color(0xFFB0C4DE)
+      ..strokeWidth = 0.8;
+    double y = rect.top + 48;
+    while (y <= rect.bottom - 4) {
+      canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), linePaint);
+      y += spacing;
+    }
+  }
+
+  void _drawDottedTemplate(Canvas canvas, Rect rect) {
+    const spacing = 28.0;
+    final paint = Paint()
+      ..color = const Color(0xFFAAAAAA)
+      ..style = PaintingStyle.fill;
+    final startX = rect.left + (rect.width % spacing) / 2;
+    final startY = rect.top + (rect.height % spacing) / 2;
+    for (double x = startX; x <= rect.right; x += spacing) {
+      for (double y = startY; y <= rect.bottom; y += spacing) {
+        canvas.drawCircle(Offset(x, y), 1.8, paint);
+      }
+    }
+  }
+
+  void _drawGridTemplate(Canvas canvas, Rect rect) {
+    const spacing = 28.0;
+    final paint = Paint()
+      ..color = const Color(0xFFCCDDEE)
+      ..strokeWidth = 0.6;
+    for (double x = rect.left; x <= rect.right; x += spacing) {
+      canvas.drawLine(Offset(x, rect.top), Offset(x, rect.bottom), paint);
+    }
+    for (double y = rect.top; y <= rect.bottom; y += spacing) {
+      canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), paint);
+    }
+  }
+
+  void _drawGraphPaperTemplate(Canvas canvas, Rect rect) {
+    const minor = 10.0;
+    const major = 50.0;
+    final minorPaint = Paint()
+      ..color = const Color(0xFFCCEECC)
+      ..strokeWidth = 0.4;
+    final majorPaint = Paint()
+      ..color = const Color(0xFF88CC88)
+      ..strokeWidth = 0.9;
+    for (double x = rect.left; x <= rect.right; x += minor) {
+      final p = (x - rect.left) % major < 0.5 ? majorPaint : minorPaint;
+      canvas.drawLine(Offset(x, rect.top), Offset(x, rect.bottom), p);
+    }
+    for (double y = rect.top; y <= rect.bottom; y += minor) {
+      final p = (y - rect.top) % major < 0.5 ? majorPaint : minorPaint;
+      canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), p);
+    }
+  }
+
+  void _drawShapeItem(Canvas canvas, ShapeItem item) {
+    final rect = Rect.fromLTWH(
+        item.position.dx, item.position.dy, item.width, item.height);
+
+    final strokePaint = Paint()
+      ..color = item.strokeColor
+      ..strokeWidth = item.strokeWidth
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+
+    final fillPaint = item.filled
+        ? (Paint()
+          ..color = item.fillColor
+          ..style = PaintingStyle.fill
+          ..isAntiAlias = true)
+        : null;
+
+    void draw(Path? path) {
+      if (path != null) {
+        if (fillPaint != null) canvas.drawPath(path, fillPaint);
+        canvas.drawPath(path, strokePaint);
+      }
+    }
+
+    switch (item.shapeType) {
+      case ShapeType.rectangle:
+        if (fillPaint != null) canvas.drawRect(rect, fillPaint);
+        canvas.drawRect(rect, strokePaint);
+      case ShapeType.ellipse:
+        if (fillPaint != null) canvas.drawOval(rect, fillPaint);
+        canvas.drawOval(rect, strokePaint);
+      case ShapeType.triangle:
+        draw(_trianglePath(rect));
+      case ShapeType.diamond:
+        draw(_diamondPath(rect));
+      case ShapeType.star:
+        draw(_starPath(rect));
+      case ShapeType.hexagon:
+        draw(_hexagonPath(rect));
+      case ShapeType.arrow:
+        draw(_arrowPath(rect));
+      case ShapeType.line:
+        canvas.drawLine(
+          Offset(rect.left, rect.top),
+          Offset(rect.right, rect.top),
+          strokePaint..strokeCap = StrokeCap.round,
+        );
+    }
+  }
+
+  Path _trianglePath(Rect r) => Path()
+    ..moveTo(r.center.dx, r.top)
+    ..lineTo(r.right, r.bottom)
+    ..lineTo(r.left, r.bottom)
+    ..close();
+
+  Path _diamondPath(Rect r) => Path()
+    ..moveTo(r.center.dx, r.top)
+    ..lineTo(r.right, r.center.dy)
+    ..lineTo(r.center.dx, r.bottom)
+    ..lineTo(r.left, r.center.dy)
+    ..close();
+
+  Path _starPath(Rect r) {
+    final cx = r.center.dx;
+    final cy = r.center.dy;
+    final outer = math.min(r.width, r.height) / 2;
+    final inner = outer * 0.42;
+    final path = Path();
+    for (int i = 0; i < 10; i++) {
+      final angle = (i * math.pi / 5) - math.pi / 2;
+      final radius = i.isEven ? outer : inner;
+      final x = cx + radius * math.cos(angle);
+      final y = cy + radius * math.sin(angle);
+      i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+    }
+    return path..close();
+  }
+
+  Path _hexagonPath(Rect r) {
+    final cx = r.center.dx;
+    final cy = r.center.dy;
+    final rx = r.width / 2;
+    final ry = r.height / 2;
+    final path = Path();
+    for (int i = 0; i < 6; i++) {
+      final angle = (i * math.pi / 3) - math.pi / 6;
+      final x = cx + rx * math.cos(angle);
+      final y = cy + ry * math.sin(angle);
+      i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+    }
+    return path..close();
+  }
+
+  Path _arrowPath(Rect r) {
+    final headW = r.width * 0.38;
+    final shaftH = r.height * 0.42;
+    final shaftTop = r.top + (r.height - shaftH) / 2;
+    final shaftBot = shaftTop + shaftH;
+    return Path()
+      ..moveTo(r.left, shaftTop)
+      ..lineTo(r.right - headW, shaftTop)
+      ..lineTo(r.right - headW, r.top)
+      ..lineTo(r.right, r.center.dy)
+      ..lineTo(r.right - headW, r.bottom)
+      ..lineTo(r.right - headW, shaftBot)
+      ..lineTo(r.left, shaftBot)
+      ..close();
+  }
+
   void _drawStroke(Canvas canvas, Stroke stroke) {
     if (stroke.points.isEmpty) return;
 
@@ -145,6 +399,41 @@ class WhiteboardPainter extends CustomPainter {
       case DrawingTool.frame:
         _drawFrame(canvas, stroke);
         return;
+      case DrawingTool.ruler:
+        if (stroke.points.length >= 2) {
+          canvas.drawLine(
+            stroke.points.first,
+            stroke.points.last,
+            Paint()
+              ..color = stroke.color
+              ..strokeWidth = stroke.strokeWidth
+              ..strokeCap = StrokeCap.round
+              ..isAntiAlias = true,
+          );
+        }
+        return;
+      case DrawingTool.lassoSelect:
+        if (stroke.points.length >= 2) {
+          final path = Path()
+            ..moveTo(stroke.points.first.dx, stroke.points.first.dy);
+          for (final p in stroke.points.skip(1)) {
+            path.lineTo(p.dx, p.dy);
+          }
+          path.close();
+          canvas.drawPath(
+              path,
+              Paint()
+                ..color = const Color(0x221E88E5)
+                ..style = PaintingStyle.fill);
+          canvas.drawPath(
+              path,
+              Paint()
+                ..color = const Color(0xFF1E88E5)
+                ..strokeWidth = 1.5
+                ..style = PaintingStyle.stroke
+                ..isAntiAlias = true);
+        }
+        return;
       default:
         break;
     }
@@ -153,20 +442,19 @@ class WhiteboardPainter extends CustomPainter {
     final isEraser = stroke.tool == DrawingTool.eraser;
 
     final paint = Paint()
-      ..color = isEraser
-          ? Colors.white
-          : isHighlighter
-              ? stroke.color.withAlpha(90)
-              : stroke.color
+      ..color = isHighlighter ? stroke.color.withAlpha(90) : stroke.color
       ..strokeWidth = isHighlighter ? stroke.strokeWidth * 3.5 : stroke.strokeWidth
       ..strokeCap = isHighlighter ? StrokeCap.square : StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke
       ..isAntiAlias = true;
+    if (isEraser) paint.blendMode = BlendMode.clear;
 
     if (stroke.points.length == 1) {
       canvas.drawCircle(stroke.points.first, paint.strokeWidth / 2,
-          paint..style = PaintingStyle.fill);
+          paint
+            ..style = PaintingStyle.fill
+            ..blendMode = isEraser ? BlendMode.clear : BlendMode.srcOver);
       return;
     }
 
@@ -227,15 +515,50 @@ class WhiteboardPainter extends CustomPainter {
   }
 
   void _drawText(Canvas canvas, TextItem item) {
+    final decoration = TextDecoration.combine([
+      if (item.underline) TextDecoration.underline,
+      if (item.strikethrough) TextDecoration.lineThrough,
+    ]);
+    final indent = item.indentLevel * TextItem.indentStep;
+    final bulletW = item.bullet ? item.fontSize * 1.2 : 0.0;
+    final textOrigin = item.position.translate(indent + bulletW, 0);
+
+    if (item.bullet) {
+      final bp = TextPainter(
+        text: TextSpan(
+          text: '•',
+          style: TextStyle(
+            color: item.color,
+            fontSize: item.fontSize,
+            fontWeight: item.fontWeight,
+            height: item.lineHeight,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      bp.layout();
+      bp.paint(canvas, item.position.translate(indent, 0));
+    }
+
     final tp = TextPainter(
       text: TextSpan(
         text: item.text,
-        style: TextStyle(color: item.color, fontSize: item.fontSize),
+        style: TextStyle(
+          color: item.color,
+          fontSize: item.fontSize,
+          fontWeight: item.fontWeight,
+          fontStyle: item.fontStyle,
+          fontFamily: item.fontFamily.isEmpty ? null : item.fontFamily,
+          decoration: (item.underline || item.strikethrough) ? decoration : null,
+          decorationColor: item.color,
+          height: item.lineHeight,
+        ),
       ),
       textDirection: TextDirection.ltr,
+      textAlign: item.textAlign,
     );
-    tp.layout(maxWidth: 480);
-    tp.paint(canvas, item.position);
+    tp.layout(maxWidth: 480 - indent - bulletW);
+    tp.paint(canvas, textOrigin);
   }
 
   void _drawStickyNote(Canvas canvas, StickyNoteItem item) {

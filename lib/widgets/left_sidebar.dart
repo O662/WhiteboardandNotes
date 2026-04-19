@@ -6,10 +6,13 @@ class WhiteboardLeftSidebar extends StatelessWidget {
   final ValueChanged<DrawingTool> onToolChanged;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
-  final VoidCallback onClear;
   final VoidCallback onInsert;
   final VoidCallback onMath;
+  final VoidCallback onFrame;
+  final VoidCallback onShape;
   final bool mathPanelOpen;
+  final bool framePanelOpen;
+  final bool shapePanelOpen;
 
   const WhiteboardLeftSidebar({
     super.key,
@@ -17,10 +20,13 @@ class WhiteboardLeftSidebar extends StatelessWidget {
     required this.onToolChanged,
     required this.onUndo,
     required this.onRedo,
-    required this.onClear,
     required this.onInsert,
     required this.onMath,
+    required this.onFrame,
+    required this.onShape,
     this.mathPanelOpen = false,
+    this.framePanelOpen = false,
+    this.shapePanelOpen = false,
   });
 
   @override
@@ -43,8 +49,6 @@ class WhiteboardLeftSidebar extends StatelessWidget {
         children: [
           _SideBtn(icon: Icons.undo_rounded, tooltip: 'Undo (Ctrl+Z)', onTap: onUndo),
           _SideBtn(icon: Icons.redo_rounded, tooltip: 'Redo (Ctrl+Y)', onTap: onRedo),
-          _SideBtn(
-              icon: Icons.delete_outline_rounded, tooltip: 'Clear', onTap: onClear),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 6, horizontal: 10),
             child: Divider(height: 1),
@@ -52,8 +56,8 @@ class WhiteboardLeftSidebar extends StatelessWidget {
           _SideBtn(
             icon: Icons.crop_square_rounded,
             tooltip: 'Frame',
-            selected: selectedTool == DrawingTool.frame,
-            onTap: () => onToolChanged(DrawingTool.frame),
+            selected: framePanelOpen,
+            onTap: onFrame,
           ),
           _SideBtn(
             icon: Icons.sticky_note_2_outlined,
@@ -61,17 +65,12 @@ class WhiteboardLeftSidebar extends StatelessWidget {
             selected: selectedTool == DrawingTool.stickyNote,
             onTap: () => onToolChanged(DrawingTool.stickyNote),
           ),
-          _SideBtn(
-            icon: Icons.title_rounded,
-            tooltip: 'Text',
-            selected: selectedTool == DrawingTool.text,
-            onTap: () => onToolChanged(DrawingTool.text),
-          ),
+
           _SideBtn(
             icon: Icons.category_outlined,
             tooltip: 'Shape',
-            selected: selectedTool == DrawingTool.shape,
-            onTap: () => onToolChanged(DrawingTool.shape),
+            selected: shapePanelOpen,
+            onTap: onShape,
           ),
           _SideBtn(
             icon: Icons.functions_rounded,
