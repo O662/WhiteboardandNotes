@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/stroke.dart';
 
-class WhiteboardToolbar extends StatelessWidget {
+class WhiteboardToolbar extends StatefulWidget {
   final DrawingTool selectedTool;
   final Color selectedColor;
   final double strokeWidth;
@@ -23,6 +23,13 @@ class WhiteboardToolbar extends StatelessWidget {
     required this.onAddRuler,
     required this.onClearRulers,
   });
+
+  @override
+  State<WhiteboardToolbar> createState() => _WhiteboardToolbarState();
+}
+
+class _WhiteboardToolbarState extends State<WhiteboardToolbar> {
+  bool _showSizeSlider = false;
 
   static const _quickColors = [
     Color(0xFF000000),
@@ -66,7 +73,7 @@ class WhiteboardToolbar extends StatelessWidget {
                 children: _paletteColors
                     .map((c) => GestureDetector(
                           onTap: () {
-                            onColorChanged(c);
+                            widget.onColorChanged(c);
                             Navigator.pop(ctx);
                           },
                           child: Container(
@@ -76,10 +83,10 @@ class WhiteboardToolbar extends StatelessWidget {
                               color: c,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: selectedColor == c
+                                color: widget.selectedColor == c
                                     ? Colors.blue
                                     : Colors.grey.shade300,
-                                width: selectedColor == c ? 2.5 : 1,
+                                width: widget.selectedColor == c ? 2.5 : 1,
                               ),
                             ),
                           ),
@@ -92,6 +99,15 @@ class WhiteboardToolbar extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  void _onSizePresetTap(double size) {
+    if (widget.strokeWidth == size) {
+      setState(() => _showSizeSlider = !_showSizeSlider);
+    } else {
+      widget.onStrokeWidthChanged(size);
+      setState(() => _showSizeSlider = false);
+    }
   }
 
   @override
@@ -125,28 +141,28 @@ class WhiteboardToolbar extends StatelessWidget {
             _ToolBtn(
               icon: icon,
               tooltip: tip,
-              selected: selectedTool == tool,
-              onTap: () => onToolChanged(tool),
+              selected: widget.selectedTool == tool,
+              onTap: () => widget.onToolChanged(tool),
             ),
           // Select / Lasso Select
-          _SelectBtn(selectedTool: selectedTool, onToolChanged: onToolChanged),
+          _SelectBtn(selectedTool: widget.selectedTool, onToolChanged: widget.onToolChanged),
           // Text
           for (final (tool, icon, tip) in postSelectTools)
             _ToolBtn(
               icon: icon,
               tooltip: tip,
-              selected: selectedTool == tool,
-              onTap: () => onToolChanged(tool),
+              selected: widget.selectedTool == tool,
+              onTap: () => widget.onToolChanged(tool),
             ),
           // Eraser group
-          _EraserBtn(selectedTool: selectedTool, onToolChanged: onToolChanged),
+          _EraserBtn(selectedTool: widget.selectedTool, onToolChanged: widget.onToolChanged),
           _divider(),
           // Quick color swatches
           for (final color in _quickColors)
             _ColorSwatch(
               color: color,
-              selected: selectedColor == color,
-              onTap: () => onColorChanged(color),
+              selected: widget.selectedColor == color,
+              onTap: () => widget.onColorChanged(color),
             ),
           // Full palette button
           Tooltip(
@@ -176,32 +192,38 @@ class WhiteboardToolbar extends StatelessWidget {
             ),
           ),
           _divider(),
-          // Pen size presets
+          // Pen size presets — tap again to reveal slider
           for (final size in _sizePresets)
             _SizePreset(
               size: size,
-              color: selectedColor,
-              selected: strokeWidth == size,
-              onTap: () => onStrokeWidthChanged(size),
+              color: widget.selectedColor,
+              selected: widget.strokeWidth == size,
+              onTap: () => _onSizePresetTap(size),
             ),
-          // Size slider
-          SizedBox(
-            width: 80,
-            child: Slider(
-              value: strokeWidth.clamp(1.0, 24.0),
-              min: 1,
-              max: 24,
-              onChanged: onStrokeWidthChanged,
-              activeColor: Colors.blue,
-            ),
+          // Inline size slider — shown when user taps an already-selected preset
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeInOut,
+            child: _showSizeSlider
+                ? SizedBox(
+                    width: 100,
+                    child: Slider(
+                      value: widget.strokeWidth.clamp(1.0, 40.0),
+                      min: 1,
+                      max: 40,
+                      onChanged: widget.onStrokeWidthChanged,
+                      activeColor: Colors.blue,
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
           _divider(),
           // Ruler
           _RulerBtn(
-            selectedTool: selectedTool,
-            onToolChanged: onToolChanged,
-            onAddRuler: onAddRuler,
-            onClearRulers: onClearRulers,
+            selectedTool: widget.selectedTool,
+            onToolChanged: widget.onToolChanged,
+            onAddRuler: widget.onAddRuler,
+            onClearRulers: widget.onClearRulers,
           ),
         ],
       ),
@@ -294,55 +316,42 @@ class _SelectBtn extends StatelessWidget {
 
   bool get _isActive =>
       selectedTool == DrawingTool.select ||
-      selectedTool == DrawingTool.lassoSelect;
+      selectedTool == DrawingTool.lassoSelect ||
+      selectedTool == DrawingTool.rectSelect;
 
-  IconData get _icon => selectedTool == DrawingTool.lassoSelect
-      ? Icons.gesture_rounded
-      : Icons.touch_app_rounded;
+  IconData get _icon {
+    if (selectedTool == DrawingTool.lassoSelect) return Icons.gesture_rounded;
+    if (selectedTool == DrawingTool.rectSelect) return Icons.crop_square_rounded;
+    return Icons.touch_app_rounded;
+  }
 
   @override
   Widget build(BuildContext context) {
+    final items = [
+      (DrawingTool.select, Icons.touch_app_rounded, 'Select'),
+      (DrawingTool.lassoSelect, Icons.gesture_rounded, 'Lasso Select'),
+      (DrawingTool.rectSelect, Icons.crop_square_rounded, 'Rect Select'),
+    ];
     return PopupMenuButton<DrawingTool>(
       tooltip: 'Select',
       padding: EdgeInsets.zero,
       onSelected: onToolChanged,
       itemBuilder: (_) => [
-        PopupMenuItem(
-          value: DrawingTool.select,
-          child: Row(children: [
-            Icon(Icons.touch_app_rounded, size: 18,
-                color: selectedTool == DrawingTool.select
-                    ? Colors.blue
-                    : Colors.black87),
-            const SizedBox(width: 10),
-            Text('Select',
-                style: TextStyle(
-                    color: selectedTool == DrawingTool.select
-                        ? Colors.blue
-                        : Colors.black87,
-                    fontWeight: selectedTool == DrawingTool.select
-                        ? FontWeight.w600
-                        : FontWeight.normal)),
-          ]),
-        ),
-        PopupMenuItem(
-          value: DrawingTool.lassoSelect,
-          child: Row(children: [
-            Icon(Icons.gesture_rounded, size: 18,
-                color: selectedTool == DrawingTool.lassoSelect
-                    ? Colors.blue
-                    : Colors.black87),
-            const SizedBox(width: 10),
-            Text('Lasso Select',
-                style: TextStyle(
-                    color: selectedTool == DrawingTool.lassoSelect
-                        ? Colors.blue
-                        : Colors.black87,
-                    fontWeight: selectedTool == DrawingTool.lassoSelect
-                        ? FontWeight.w600
-                        : FontWeight.normal)),
-          ]),
-        ),
+        for (final (tool, icon, label) in items)
+          PopupMenuItem(
+            value: tool,
+            child: Row(children: [
+              Icon(icon, size: 18,
+                  color: selectedTool == tool ? Colors.blue : Colors.black87),
+              const SizedBox(width: 10),
+              Text(label,
+                  style: TextStyle(
+                      color: selectedTool == tool ? Colors.blue : Colors.black87,
+                      fontWeight: selectedTool == tool
+                          ? FontWeight.w600
+                          : FontWeight.normal)),
+            ]),
+          ),
       ],
       child: Container(
         padding: const EdgeInsets.all(6),

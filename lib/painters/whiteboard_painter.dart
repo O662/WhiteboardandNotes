@@ -10,7 +10,6 @@ enum BackgroundStyle { blank, dots, grid }
 
 class WhiteboardPainter extends CustomPainter {
   final List<WhiteboardItem> items;
-  final Stroke? activeStroke;
   final BackgroundStyle backgroundStyle;
   final TransformationController? transformationController;
   final Size? screenSize;
@@ -18,7 +17,6 @@ class WhiteboardPainter extends CustomPainter {
 
   WhiteboardPainter({
     required this.items,
-    this.activeStroke,
     this.backgroundStyle = BackgroundStyle.dots,
     this.transformationController,
     this.screenSize,
@@ -36,13 +34,10 @@ class WhiteboardPainter extends CustomPainter {
     for (final item in items) {
       if (item is FrameItem) _drawFrameItem(canvas, item);
     }
-    // Save a layer so eraser strokes (BlendMode.clear) punch holes in the
-    // ink layer rather than painting white over the background pattern.
-    canvas.saveLayer(null, Paint());
     for (final item in items) {
       switch (item) {
-        case StrokeItem(:final stroke):
-          _drawStroke(canvas, stroke);
+        case StrokeItem():
+          break; // rendered in AnnotationPainter above the rich-item overlay
         case TextItem():
           _drawText(canvas, item);
         case StickyNoteItem():
@@ -50,29 +45,30 @@ class WhiteboardPainter extends CustomPainter {
         case ShapeItem():
           _drawShapeItem(canvas, item);
         case FrameItem():
-          break; // drawn before saveLayer
+          break; // drawn before this loop
         case ImageItem() ||
               TableItem() ||
               AttachmentItem() ||
               LinkItem() ||
               VideoItem() ||
               PrintoutItem() ||
-              MathGraphItem():
+              MathGraphItem() ||
+              ChecklistItem() ||
+              DateTimeItem():
           break; // rendered as Flutter widget in the rich-item overlay
       }
     }
-    if (activeStroke != null) _drawStroke(canvas, activeStroke!);
-    canvas.restore();
     if (selectedIndex != null && selectedIndex! < items.length) {
       final sel = items[selectedIndex!];
       // Rich items draw their own selection border in the overlay widget
-      if (sel case StrokeItem() || TextItem() || StickyNoteItem() || FrameItem() || ShapeItem()) {
+      // Stroke selection is drawn in AnnotationPainter
+      if (sel case TextItem() || StickyNoteItem() || FrameItem() || ShapeItem()) {
         _drawSelection(canvas, sel);
       }
     }
   }
 
-  void _drawSelection(Canvas canvas, WhiteboardItem item) {
+  static void _drawSelection(Canvas canvas, WhiteboardItem item) {
     final rect = item.bounds.inflate(6);
     final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(4));
 
@@ -389,7 +385,7 @@ class WhiteboardPainter extends CustomPainter {
       ..close();
   }
 
-  void _drawStroke(Canvas canvas, Stroke stroke) {
+  static void _drawStroke(Canvas canvas, Stroke stroke) {
     if (stroke.points.isEmpty) return;
 
     switch (stroke.tool) {
@@ -434,6 +430,23 @@ class WhiteboardPainter extends CustomPainter {
                 ..isAntiAlias = true);
         }
         return;
+      case DrawingTool.rectSelect:
+        if (stroke.points.length >= 2) {
+          final rect = Rect.fromPoints(stroke.points.first, stroke.points.last);
+          canvas.drawRect(
+              rect,
+              Paint()
+                ..color = const Color(0x221E88E5)
+                ..style = PaintingStyle.fill);
+          canvas.drawRect(
+              rect,
+              Paint()
+                ..color = const Color(0xFF1E88E5)
+                ..strokeWidth = 1.5
+                ..style = PaintingStyle.stroke
+                ..isAntiAlias = true);
+        }
+        return;
       default:
         break;
     }
@@ -471,7 +484,7 @@ class WhiteboardPainter extends CustomPainter {
     canvas.drawPath(path, paint);
   }
 
-  void _drawShape(Canvas canvas, Stroke stroke) {
+  static void _drawShape(Canvas canvas, Stroke stroke) {
     if (stroke.points.length < 2) return;
     final rect = Rect.fromPoints(stroke.points.first, stroke.points.last);
     canvas.drawRect(
@@ -484,7 +497,7 @@ class WhiteboardPainter extends CustomPainter {
     );
   }
 
-  void _drawFrame(Canvas canvas, Stroke stroke) {
+  static void _drawFrame(Canvas canvas, Stroke stroke) {
     if (stroke.points.length < 2) return;
     final rect = Rect.fromPoints(stroke.points.first, stroke.points.last);
 
@@ -602,4 +615,42 @@ class WhiteboardPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(WhiteboardPainter old) => true;
+}
+
+/// Paints strokes above the rich-item widget overlay so annotations always
+/// appear on top of images, tables, graphs, and other embedded items.
+class AnnotationPainter extends CustomPainter {
+  final List<WhiteboardItem> items;
+  final Stroke? activeStroke;
+  final Matrix4 transformMatrix;
+  final int? selectedIndex;
+
+  AnnotationPainter({
+    required this.items,
+    required this.transformMatrix,
+    this.activeStroke,
+    this.selectedIndex,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.transform(transformMatrix.storage);
+    // saveLayer so eraser (BlendMode.clear) punches through annotation strokes
+    // without affecting the items below.
+    canvas.saveLayer(null, Paint());
+    for (final item in items) {
+      if (item is StrokeItem) WhiteboardPainter._drawStroke(canvas, item.stroke);
+    }
+    if (activeStroke != null) WhiteboardPainter._drawStroke(canvas, activeStroke!);
+    canvas.restore();
+    if (selectedIndex != null && selectedIndex! < items.length) {
+      final sel = items[selectedIndex!];
+      if (sel is StrokeItem) WhiteboardPainter._drawSelection(canvas, sel);
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(AnnotationPainter old) => true;
 }

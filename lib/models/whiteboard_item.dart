@@ -117,6 +117,24 @@ sealed class WhiteboardItem {
             width: (json['width'] as num).toDouble(),
             height: (json['height'] as num).toDouble(),
           ),
+        'checklist' => ChecklistItem(
+            position: Offset((json['x'] as num).toDouble(),
+                (json['y'] as num).toDouble()),
+            title: json['title'] as String? ?? 'Checklist',
+            entries: (json['entries'] as List? ?? [])
+                .map((e) => ChecklistEntry.fromJson(e as Map<String, dynamic>))
+                .toList(),
+          ),
+        'dateTime' => DateTimeItem(
+            position: Offset((json['x'] as num).toDouble(),
+                (json['y'] as num).toDouble()),
+            mode: DateTimeMode.values.firstWhere(
+                (m) => m.name == (json['mode'] as String? ?? 'time'),
+                orElse: () => DateTimeMode.time),
+            isLive: json['isLive'] as bool? ?? true,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(
+                json['createdAt'] as int? ?? 0),
+          ),
         _ => throw FormatException('Unknown item type: ${json['type']}'),
       };
 }
@@ -794,6 +812,102 @@ final class FrameItem extends WhiteboardItem {
         'label': label,
         'width': width,
         'height': height,
+      };
+}
+
+// ── Checklist item ─────────────────────────────────────────────────────────
+
+class ChecklistEntry {
+  final String text;
+  final bool checked;
+  const ChecklistEntry({required this.text, this.checked = false});
+
+  ChecklistEntry copyWith({String? text, bool? checked}) =>
+      ChecklistEntry(text: text ?? this.text, checked: checked ?? this.checked);
+
+  Map<String, dynamic> toJson() => {'text': text, 'checked': checked};
+
+  static ChecklistEntry fromJson(Map<String, dynamic> j) =>
+      ChecklistEntry(text: j['text'] as String, checked: j['checked'] as bool? ?? false);
+}
+
+final class ChecklistItem extends WhiteboardItem {
+  final Offset position;
+  final List<ChecklistEntry> entries;
+  final String title;
+
+  static const double cardWidth = 240.0;
+
+  const ChecklistItem({
+    required this.position,
+    this.entries = const [],
+    this.title = 'Checklist',
+  });
+
+  double get _cardHeight => (46.0 + entries.length * 36.0 + 40.0).clamp(80.0, 500.0);
+
+  @override
+  Rect get bounds => Rect.fromLTWH(position.dx, position.dy, cardWidth, _cardHeight);
+
+  ChecklistItem withEntries(List<ChecklistEntry> newEntries) =>
+      ChecklistItem(position: position, entries: newEntries, title: title);
+
+  @override
+  ChecklistItem movedBy(Offset delta) =>
+      ChecklistItem(position: position + delta, entries: entries, title: title);
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'checklist',
+        'x': position.dx,
+        'y': position.dy,
+        'title': title,
+        'entries': entries.map((e) => e.toJson()).toList(),
+      };
+}
+
+// ── DateTime display item ───────────────────────────────────────────────────
+
+enum DateTimeMode { time, date, datetime }
+
+final class DateTimeItem extends WhiteboardItem {
+  final Offset position;
+  final DateTimeMode mode;
+  final bool isLive;
+  final DateTime createdAt;
+
+  const DateTimeItem({
+    required this.position,
+    required this.mode,
+    required this.isLive,
+    required this.createdAt,
+  });
+
+  static double widthFor(DateTimeMode m) =>
+      m == DateTimeMode.datetime ? 220.0 : 180.0;
+  static double heightFor(DateTimeMode m) =>
+      m == DateTimeMode.datetime ? 104.0 : 76.0;
+
+  @override
+  Rect get bounds =>
+      Rect.fromLTWH(position.dx, position.dy, widthFor(mode), heightFor(mode));
+
+  @override
+  DateTimeItem movedBy(Offset delta) => DateTimeItem(
+        position: position + delta,
+        mode: mode,
+        isLive: isLive,
+        createdAt: createdAt,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'dateTime',
+        'x': position.dx,
+        'y': position.dy,
+        'mode': mode.name,
+        'isLive': isLive,
+        'createdAt': createdAt.millisecondsSinceEpoch,
       };
 }
 

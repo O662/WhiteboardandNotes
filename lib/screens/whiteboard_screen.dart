@@ -6,11 +6,15 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'package:pdf/pdf.dart' hide PdfDocument;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:share_plus/share_plus.dart';
 
 import '../models/stroke.dart';
 import '../painters/whiteboard_painter.dart';
@@ -29,6 +33,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   final _transformationController = TransformationController();
   final List<WhiteboardItem> _items = [];
   final _rulerKey = GlobalKey<_RulerOverlayState>();
+  final _boardCaptureKey = GlobalKey();
   final List<WhiteboardItem> _redoStack = [];
   Stroke? _activeStroke;
 
@@ -348,6 +353,21 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     setState(() => _selectedIndex = null);
   }
 
+  void _handleRectSelect(List<Offset> points) {
+    if (points.length < 2) return;
+    final rect = Rect.fromPoints(points.first, points.last);
+    for (int i = _items.length - 1; i >= 0; i--) {
+      if (rect.overlaps(_items[i].bounds)) {
+        setState(() {
+          _selectedIndex = i;
+          _tool = DrawingTool.select;
+        });
+        return;
+      }
+    }
+    setState(() => _selectedIndex = null);
+  }
+
   bool _pointInPolygon(Offset point, List<Offset> polygon) {
     int count = 0;
     for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -569,22 +589,53 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
 
   Future<void> _openBoard() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        dialogTitle: 'Open board',
-        type: FileType.custom,
-        allowedExtensions: ['bord'],
-        withData: Platform.isAndroid || Platform.isIOS,
-      );
-      if (result == null) return;
+      String? filePath;
+      String content;
 
-      final file = result.files.single;
-      final String content;
-      if (file.bytes != null) {
-        content = utf8.decode(file.bytes!);
-      } else if (file.path != null) {
-        content = await File(file.path!).readAsString();
+      if (Platform.isAndroid || Platform.isIOS) {
+        final dir = await getApplicationDocumentsDirectory();
+        final bordFiles = dir
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.bord'))
+            .toList()
+          ..sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
+
+        if (!mounted) return;
+        if (bordFiles.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No saved boards found')),
+          );
+          return;
+        }
+
+        final chosen = await showDialog<File>(
+          context: context,
+          builder: (ctx) => SimpleDialog(
+            title: const Text('Open board'),
+            children: bordFiles.map((f) {
+              final name = f.path.split('/').last.replaceAll('.bord', '');
+              return SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, f),
+                child: Text(name),
+              );
+            }).toList(),
+          ),
+        );
+        if (chosen == null) return;
+        filePath = chosen.path;
+        content = await chosen.readAsString();
       } else {
-        throw Exception('Could not read file');
+        final result = await FilePicker.platform.pickFiles(
+          dialogTitle: 'Open board',
+          type: FileType.custom,
+          allowedExtensions: ['bord'],
+        );
+        if (result == null) return;
+        final file = result.files.single;
+        if (file.path == null) throw Exception('Could not read file');
+        filePath = file.path;
+        content = await File(file.path!).readAsString();
       }
       final json = jsonDecode(content) as Map<String, dynamic>;
 
@@ -607,7 +658,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
         ..setEntry(1, 3, (t['ty'] as num).toDouble());
 
       setState(() {
-        _currentFilePath = file.path;
+        _currentFilePath = filePath;
         _items
           ..clear()
           ..addAll(items);
@@ -662,6 +713,143 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     final size = MediaQuery.of(context).size;
     final m = _transformationController.value.clone()..invert();
     return MatrixUtils.transformPoint(m, Offset(size.width / 2, size.height / 2));
+  }
+
+  // ── Share / Export ──────────────────────────────────────────────────────────
+
+  Rect _computeContentBounds() {
+    if (_items.isEmpty) return const Rect.fromLTWH(0, 0, 1200, 900);
+    var bounds = _items.first.bounds;
+    for (final item in _items.skip(1)) {
+      bounds = bounds.expandToInclude(item.bounds);
+    }
+    return bounds.inflate(50);
+  }
+
+  Future<Uint8List?> _captureAsImage() async {
+    final contentBounds = _computeContentBounds();
+    final screenSize = MediaQuery.of(context).size;
+    final scale = math.min(
+          screenSize.width / contentBounds.width,
+          screenSize.height / contentBounds.height,
+        ) *
+        0.95;
+    final tx = screenSize.width / 2 - scale * contentBounds.center.dx;
+    final ty = screenSize.height / 2 - scale * contentBounds.center.dy;
+    final fitMatrix = Matrix4.diagonal3Values(scale, scale, 1.0);
+    fitMatrix.setTranslationRaw(tx, ty, 0.0);
+
+    final savedMatrix = _transformationController.value.clone();
+    setState(() => _transformationController.value = fitMatrix);
+    await WidgetsBinding.instance.endOfFrame;
+
+    try {
+      final boundary = _boardCaptureKey.currentContext!.findRenderObject()!
+          as RenderRepaintBoundary;
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      return data?.buffer.asUint8List();
+    } finally {
+      if (mounted) setState(() => _transformationController.value = savedMatrix);
+    }
+  }
+
+  Future<Uint8List> _buildPdf(Uint8List pngBytes) async {
+    final doc = pw.Document();
+    final img = pw.MemoryImage(pngBytes);
+    doc.addPage(pw.Page(
+      pageFormat: PdfPageFormat.a4.landscape,
+      margin: const pw.EdgeInsets.all(16),
+      build: (ctx) => pw.Center(child: pw.Image(img, fit: pw.BoxFit.contain)),
+    ));
+    return doc.save();
+  }
+
+  Future<void> _exportAsPng() async {
+    final bytes = await _captureAsImage();
+    if (bytes == null || !mounted) return;
+    if (Platform.isWindows) {
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save PNG',
+        fileName: 'board.png',
+        type: FileType.custom,
+        allowedExtensions: ['png'],
+      );
+      if (path != null) {
+        await File(path).writeAsBytes(bytes);
+        if (mounted) _showSnack('Saved to $path');
+      }
+    } else {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File(
+          '${dir.path}/board_${DateTime.now().millisecondsSinceEpoch}.png');
+      await file.writeAsBytes(bytes);
+      if (mounted) _showSnack('Saved to ${file.path}');
+    }
+  }
+
+  Future<void> _exportAsPdf() async {
+    final png = await _captureAsImage();
+    if (png == null || !mounted) return;
+    final pdfBytes = await _buildPdf(png);
+    if (Platform.isWindows) {
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save PDF',
+        fileName: 'board.pdf',
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+      if (path != null) {
+        await File(path).writeAsBytes(pdfBytes);
+        if (mounted) _showSnack('Saved to $path');
+      }
+    } else {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File(
+          '${dir.path}/board_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      await file.writeAsBytes(pdfBytes);
+      if (mounted) _showSnack('Saved to ${file.path}');
+    }
+  }
+
+  Future<void> _shareViaOs() async {
+    final bytes = await _captureAsImage();
+    if (bytes == null || !mounted) return;
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/board_share.png');
+    await file.writeAsBytes(bytes);
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(file.path)], subject: 'BORD export'),
+    );
+  }
+
+  void _showSnack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+    );
+  }
+
+  void _showShareSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _ExportSheet(
+        onSavePng: () {
+          Navigator.pop(context);
+          _exportAsPng();
+        },
+        onSavePdf: () {
+          Navigator.pop(context);
+          _exportAsPdf();
+        },
+        onShare: () {
+          Navigator.pop(context);
+          _shareViaOs();
+        },
+      ),
+    );
   }
 
   // ── Insert ─────────────────────────────────────────────────────────────────
@@ -953,6 +1141,25 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     _addItem(ImageItem(
       position: center - const Offset(200, 150),
       path: result.files.single.path!,
+    ));
+  }
+
+  void _insertChecklist() {
+    final center = _viewportCenter;
+    _addItem(ChecklistItem(
+      position: center - const Offset(ChecklistItem.cardWidth / 2, 63),
+    ));
+  }
+
+  void _insertDateTime(DateTimeMode mode, bool isLive) {
+    final center = _viewportCenter;
+    final w = DateTimeItem.widthFor(mode);
+    final h = DateTimeItem.heightFor(mode);
+    _addItem(DateTimeItem(
+      position: center - Offset(w / 2, h / 2),
+      mode: mode,
+      isLive: isLive,
+      createdAt: DateTime.now(),
     ));
   }
 
@@ -1419,7 +1626,9 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               item is LinkItem ||
               item is VideoItem ||
               item is PrintoutItem ||
-              item is MathGraphItem)
+              item is MathGraphItem ||
+              item is ChecklistItem ||
+              item is DateTimeItem)
             _buildRichOverlayItem(item, index, matrix, scale),
       ],
     );
@@ -1440,6 +1649,14 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       final VideoItem i => _VideoCard(item: i),
       final PrintoutItem i => _PrintoutCard(item: i),
       final MathGraphItem i => _MathGraphCard(item: i),
+      final ChecklistItem i => _ChecklistCard(
+          item: i,
+          onUpdate: (updated) {
+            setState(() => _items[index] = updated);
+            _scheduleAutosave();
+          },
+        ),
+      final DateTimeItem i => _DateTimeCard(item: i),
       _ => const SizedBox.shrink(),
     };
 
@@ -1611,6 +1828,19 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       return;
     }
 
+    if (_tool == DrawingTool.rectSelect) {
+      setState(() {
+        _isPanning = false;
+        _activeStroke = Stroke(
+          points: [_downCanvasPos!],
+          color: const Color(0xFF1E88E5),
+          strokeWidth: 1.5,
+          tool: DrawingTool.rectSelect,
+        );
+      });
+      return;
+    }
+
     if (_tool == DrawingTool.strokeEraser) {
       _applyStrokeErase(_downCanvasPos!);
       return;
@@ -1710,7 +1940,8 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     setState(() {
       if (_tool == DrawingTool.shape ||
           _tool == DrawingTool.frame ||
-          _tool == DrawingTool.ruler) {
+          _tool == DrawingTool.ruler ||
+          _tool == DrawingTool.rectSelect) {
         _activeStroke = _activeStroke!
             .copyWith(points: [_activeStroke!.points.first, pos]);
       } else {
@@ -1757,6 +1988,8 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       setState(() => _activeStroke = null);
       if (s.tool == DrawingTool.lassoSelect) {
         _handleLassoSelect(s.points);
+      } else if (s.tool == DrawingTool.rectSelect) {
+        _handleRectSelect(s.points);
       } else if (s.points.isNotEmpty) {
         _addItem(StrokeItem(s));
       }
@@ -1932,6 +2165,10 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
         },
         child: Stack(
           children: [
+            // ── Content layer (canvas + overlays, captured for export) ──────
+            RepaintBoundary(
+              key: _boardCaptureKey,
+              child: Stack(children: [
             // ── Canvas ─────────────────────────────────────────────────────
             Listener(
               onPointerDown: _onPointerDown,
@@ -1957,7 +2194,6 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                   child: CustomPaint(
                     painter: WhiteboardPainter(
                       items: _items,
-                      activeStroke: _activeStroke,
                       backgroundStyle: _backgroundStyle,
                       transformationController: _transformationController,
                       screenSize: MediaQuery.of(context).size,
@@ -1975,6 +2211,25 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                 builder: (context, _) => _buildRichOverlay(),
               ),
             ),
+
+            // ── Annotation overlay (strokes always above rich items) ────────
+            IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _transformationController,
+                builder: (context, _) => SizedBox.expand(
+                  child: CustomPaint(
+                    painter: AnnotationPainter(
+                      items: _items,
+                      activeStroke: _activeStroke,
+                      transformMatrix: _transformationController.value,
+                      selectedIndex: _selectedIndex,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+              ]), // inner Stack
+            ), // RepaintBoundary
 
             // ── Ruler overlay (Offstage preserves state across tool switches) ─
             Offstage(
@@ -2023,7 +2278,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
             Positioned(
               top: pad.top + 12,
               right: 16,
-              child: _ShareButton(),
+              child: _ShareButton(onTap: _showShareSheet),
             ),
 
             // ── Left sidebar — vertically centered ─────────────────────────
@@ -2324,6 +2579,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                     onVideo: () { _closeInsertPanel(); _insertVideo(); },
                     onPrintout: () { _closeInsertPanel(); _insertPrintout(); },
                     onPdf: () { _closeInsertPanel(); _insertPdf(); },
+                    onChecklist: () { _closeInsertPanel(); _insertChecklist(); },
+                    onLiveTime: () { _closeInsertPanel(); _insertDateTime(DateTimeMode.time, true); },
+                    onLiveDate: () { _closeInsertPanel(); _insertDateTime(DateTimeMode.date, true); },
+                    onLiveClock: () { _closeInsertPanel(); _insertDateTime(DateTimeMode.datetime, true); },
+                    onTimestamp: () { _closeInsertPanel(); _insertDateTime(DateTimeMode.datetime, false); },
                     onGenerate: () {
                       _closeInsertPanel();
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -2926,31 +3186,100 @@ class _BordLogo extends StatelessWidget {
 }
 
 class _ShareButton extends StatelessWidget {
+  final VoidCallback? onTap;
+  const _ShareButton({this.onTap});
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-      decoration: BoxDecoration(
-        color: Colors.blue,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.blue.withAlpha(80),
-              blurRadius: 12,
-              offset: const Offset(0, 2))
-        ],
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.blue,
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.blue.withAlpha(80),
+                blurRadius: 12,
+                offset: const Offset(0, 2))
+          ],
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.ios_share_rounded, size: 16, color: Colors.white),
+            SizedBox(width: 6),
+            Text('Share',
+                style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: Colors.white)),
+          ],
+        ),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          Icon(Icons.ios_share_rounded, size: 16, color: Colors.white),
-          SizedBox(width: 6),
-          Text('Share',
-              style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                  color: Colors.white)),
-        ],
+    );
+  }
+}
+
+// ── Export / share sheet ───────────────────────────────────────────────────
+
+class _ExportSheet extends StatelessWidget {
+  final VoidCallback onSavePng;
+  final VoidCallback onSavePdf;
+  final VoidCallback onShare;
+  const _ExportSheet(
+      {required this.onSavePng,
+      required this.onSavePdf,
+      required this.onShare});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Export board',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              ),
+            ),
+            const Divider(height: 20),
+            ListTile(
+              leading: const Icon(Icons.image_outlined),
+              title: const Text('Save as PNG'),
+              subtitle: const Text('High-resolution image file'),
+              onTap: onSavePng,
+            ),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: const Text('Save as PDF'),
+              subtitle: const Text('A4 landscape document'),
+              onTap: onSavePdf,
+            ),
+            const Divider(height: 8),
+            ListTile(
+              leading: const Icon(Icons.ios_share_rounded),
+              title: const Text('Share via…'),
+              subtitle: const Text('Open system share sheet'),
+              onTap: onShare,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2966,6 +3295,11 @@ class _InsertPanel extends StatelessWidget {
   final VoidCallback onVideo;
   final VoidCallback onPrintout;
   final VoidCallback onPdf;
+  final VoidCallback onChecklist;
+  final VoidCallback onLiveTime;
+  final VoidCallback onLiveDate;
+  final VoidCallback onLiveClock;
+  final VoidCallback onTimestamp;
   final VoidCallback onGenerate;
 
   const _InsertPanel({
@@ -2976,12 +3310,17 @@ class _InsertPanel extends StatelessWidget {
     required this.onVideo,
     required this.onPrintout,
     required this.onPdf,
+    required this.onChecklist,
+    required this.onLiveTime,
+    required this.onLiveDate,
+    required this.onLiveClock,
+    required this.onTimestamp,
     required this.onGenerate,
   });
 
   @override
   Widget build(BuildContext context) {
-    final options = [
+    final mediaOptions = [
       (Icons.image_outlined, 'Picture', const Color(0xFF43A047), onImage),
       (Icons.table_chart_outlined, 'Table', const Color(0xFF1E88E5), onTable),
       (Icons.attach_file_rounded, 'File', const Color(0xFFFB8C00), onAttachment),
@@ -2990,6 +3329,52 @@ class _InsertPanel extends StatelessWidget {
       (Icons.description_outlined, 'Doc', const Color(0xFFEF6C00), onPrintout),
       (Icons.picture_as_pdf_rounded, 'PDF', const Color(0xFFD32F2F), onPdf),
     ];
+
+    final widgetOptions = [
+      (Icons.checklist_rounded, 'Checklist', const Color(0xFF7C3AED), onChecklist),
+      (Icons.schedule_rounded, 'Live Time', const Color(0xFF0097A7), onLiveTime),
+      (Icons.calendar_today_rounded, 'Live Date', const Color(0xFF00897B), onLiveDate),
+      (Icons.watch_later_rounded, 'Live Clock', const Color(0xFF1E88E5), onLiveClock),
+      (Icons.push_pin_rounded, 'Timestamp', const Color(0xFF6D4C41), onTimestamp),
+    ];
+
+    Widget sectionGrid(List<(IconData, String, Color, VoidCallback)> opts) =>
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+          childAspectRatio: 1,
+          children: [
+            for (final (icon, label, color, onTap) in opts)
+              InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Color.alphaBlend(color.withAlpha(38), Colors.white),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, size: 24, color: color),
+                      const SizedBox(height: 4),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: color,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
 
     return Container(
       width: 196,
@@ -3007,44 +3392,25 @@ class _InsertPanel extends StatelessWidget {
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-            childAspectRatio: 1,
-            children: [
-              for (final (icon, label, color, onTap) in options)
-                InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Color.alphaBlend(
-                          color.withAlpha(38), Colors.white),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(icon, size: 26, color: color),
-                        const SizedBox(height: 5),
-                        Text(
-                          label,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: color,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
+          Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 6),
+            child: Text('Media',
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade500, letterSpacing: 0.8)),
           ),
+          sectionGrid(mediaOptions),
+          const SizedBox(height: 10),
+          Divider(height: 1, thickness: 1, color: Colors.grey.shade100),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 6),
+            child: Text('Widgets',
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade500, letterSpacing: 0.8)),
+          ),
+          sectionGrid(widgetOptions),
           const SizedBox(height: 10),
           InkWell(
             onTap: onGenerate,
@@ -3062,8 +3428,7 @@ class _InsertPanel extends StatelessWidget {
                 child: const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.auto_awesome_rounded,
-                        size: 15, color: Colors.white),
+                    Icon(Icons.auto_awesome_rounded, size: 15, color: Colors.white),
                     SizedBox(width: 6),
                     Text('Generate',
                         style: TextStyle(
@@ -3501,6 +3866,60 @@ class _MathPanelState extends State<_MathPanel> {
     ('Pressure',                'P = F / A'),
   ];
 
+  // (label shown below symbol, symbol inserted as text, tooltip)
+  static const _symbols = [
+    // Constants
+    ('π',   'π',       'Pi'),
+    ('e',   'e',       "Euler's number"),
+    ('φ',   'φ',       'Golden ratio'),
+    ('τ',   'τ',       'Tau (2π)'),
+    ('∞',   '∞',       'Infinity'),
+    ('√',   '√',       'Square root'),
+    // Calculus — integrals
+    ('∫',   '∫',       'Integral'),
+    ('∬',   '∬',       'Double integral'),
+    ('∭',   '∭',       'Triple integral'),
+    ('∮',   '∮',       'Contour integral'),
+    // Calculus — derivatives
+    ('d/dx',  'd/dx',    'Derivative'),
+    ('d²/dx²','d²/dx²',  'Second derivative'),
+    ('∂/∂x',  '∂/∂x',    'Partial derivative'),
+    ('∇',   '∇',       'Del / Nabla'),
+    // Summation / product
+    ('Σ',   'Σ',       'Summation'),
+    ('Π',   'Π',       'Product'),
+    // Operators
+    ('±',   '±',       'Plus-minus'),
+    ('×',   '×',       'Multiply'),
+    ('÷',   '÷',       'Divide'),
+    ('≈',   '≈',       'Approximately'),
+    ('≠',   '≠',       'Not equal'),
+    ('≤',   '≤',       'Less or equal'),
+    ('≥',   '≥',       'Greater or equal'),
+    ('∝',   '∝',       'Proportional'),
+    // Greek letters
+    ('α',   'α',       'Alpha'),
+    ('β',   'β',       'Beta'),
+    ('γ',   'γ',       'Gamma'),
+    ('δ',   'δ',       'Delta'),
+    ('ε',   'ε',       'Epsilon'),
+    ('θ',   'θ',       'Theta'),
+    ('λ',   'λ',       'Lambda'),
+    ('μ',   'μ',       'Mu'),
+    ('σ',   'σ',       'Sigma'),
+    ('ω',   'ω',       'Omega'),
+    ('Δ',   'Δ',       'Delta (upper)'),
+    ('Ω',   'Ω',       'Omega (upper)'),
+    // Set theory
+    ('∈',   '∈',       'Element of'),
+    ('∉',   '∉',       'Not element of'),
+    ('⊂',   '⊂',       'Subset'),
+    ('∪',   '∪',       'Union'),
+    ('∩',   '∩',       'Intersection'),
+    ('∀',   '∀',       'For all'),
+    ('∃',   '∃',       'There exists'),
+  ];
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -3521,13 +3940,14 @@ class _MathPanelState extends State<_MathPanel> {
         mainAxisSize: MainAxisSize.min,
         children: [
           // Tab bar
-          Row(
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
             children: [
               _buildTabBtn(0, 'Graphs'),
-              const SizedBox(width: 6),
               _buildTabBtn(1, 'Math'),
-              const SizedBox(width: 6),
               _buildTabBtn(2, 'Physics'),
+              _buildTabBtn(3, 'Symbols'),
             ],
           ),
           const SizedBox(height: 10),
@@ -3535,10 +3955,12 @@ class _MathPanelState extends State<_MathPanel> {
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 420),
             child: SingleChildScrollView(
-              child: _tab == 0
-                  ? _buildGraphsTab()
-                  : _buildEquationsTab(
-                      _tab == 1 ? _mathEquations : _physicsEquations),
+              child: switch (_tab) {
+                0 => _buildGraphsTab(),
+                3 => _buildSymbolsTab(),
+                _ => _buildEquationsTab(
+                    _tab == 1 ? _mathEquations : _physicsEquations),
+              },
             ),
           ),
         ],
@@ -3672,6 +4094,38 @@ class _MathPanelState extends State<_MathPanel> {
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildSymbolsTab() {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final (label, sym, tip) in _symbols)
+          Tooltip(
+            message: tip,
+            child: InkWell(
+              onTap: () => widget.onInsertEquation(sym),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  label,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -5157,4 +5611,247 @@ class _ShapePreviewPainter extends CustomPainter {
       strokeWidth != old.strokeWidth ||
       filled != old.filled ||
       fillColor != old.fillColor;
+}
+
+// ── Checklist card ─────────────────────────────────────────────────────────
+
+class _ChecklistCard extends StatefulWidget {
+  final ChecklistItem item;
+  final void Function(ChecklistItem) onUpdate;
+  const _ChecklistCard({required this.item, required this.onUpdate});
+
+  @override
+  State<_ChecklistCard> createState() => _ChecklistCardState();
+}
+
+class _ChecklistCardState extends State<_ChecklistCard> {
+  final _newItemController = TextEditingController();
+
+  @override
+  void dispose() {
+    _newItemController.dispose();
+    super.dispose();
+  }
+
+  void _toggle(int i) {
+    final entries = [...widget.item.entries];
+    entries[i] = entries[i].copyWith(checked: !entries[i].checked);
+    widget.onUpdate(widget.item.withEntries(entries));
+  }
+
+  void _addEntry(String text) {
+    if (text.trim().isEmpty) return;
+    final entries = [...widget.item.entries, ChecklistEntry(text: text.trim())];
+    widget.onUpdate(widget.item.withEntries(entries));
+    _newItemController.clear();
+  }
+
+  void _removeEntry(int i) {
+    final entries = [...widget.item.entries]..removeAt(i);
+    widget.onUpdate(widget.item.withEntries(entries));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final done = widget.item.entries.where((e) => e.checked).length;
+    final total = widget.item.entries.length;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(18), blurRadius: 8)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF7C3AED).withAlpha(20),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.checklist_rounded, size: 15, color: Color(0xFF7C3AED)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(widget.item.title,
+                      style: const TextStyle(fontWeight: FontWeight.w600,
+                          fontSize: 13, color: Color(0xFF7C3AED))),
+                ),
+                if (total > 0)
+                  Text('$done/$total',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+              ],
+            ),
+          ),
+          for (int i = 0; i < widget.item.entries.length; i++)
+            InkWell(
+              onTap: () => _toggle(i),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                child: Row(
+                  children: [
+                    Icon(
+                      widget.item.entries[i].checked
+                          ? Icons.check_box_rounded
+                          : Icons.check_box_outline_blank_rounded,
+                      size: 18,
+                      color: widget.item.entries[i].checked
+                          ? const Color(0xFF7C3AED)
+                          : Colors.grey.shade400,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.item.entries[i].text,
+                        style: TextStyle(
+                          fontSize: 13,
+                          decoration: widget.item.entries[i].checked
+                              ? TextDecoration.lineThrough
+                              : null,
+                          color: widget.item.entries[i].checked
+                              ? Colors.grey.shade400
+                              : Colors.black87,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => _removeEntry(i),
+                      child: Icon(Icons.close, size: 14, color: Colors.grey.shade400),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+            child: Row(
+              children: [
+                Icon(Icons.add_rounded, size: 18, color: Colors.grey.shade400),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _newItemController,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Add item…',
+                      hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
+                      isDense: true,
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    onSubmitted: _addEntry,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Date/Time display card ──────────────────────────────────────────────────
+
+class _DateTimeCard extends StatefulWidget {
+  final DateTimeItem item;
+  const _DateTimeCard({required this.item});
+
+  @override
+  State<_DateTimeCard> createState() => _DateTimeCardState();
+}
+
+class _DateTimeCardState extends State<_DateTimeCard> {
+  Timer? _timer;
+  late DateTime _now;
+
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    if (widget.item.isLive) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _now = DateTime.now());
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String _fmtTime(DateTime dt) {
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final s = dt.second.toString().padLeft(2, '0');
+    final period = dt.hour < 12 ? 'AM' : 'PM';
+    return '$h:$m:$s $period';
+  }
+
+  String _fmtDate(DateTime dt) {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    return '${days[dt.weekday - 1]}, ${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dt = widget.item.isLive ? _now : widget.item.createdAt;
+    final mode = widget.item.mode;
+    final accentColor = widget.item.isLive
+        ? const Color(0xFF1E88E5)
+        : const Color(0xFF6D4C41);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(18), blurRadius: 8)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                widget.item.isLive ? Icons.radio_button_checked : Icons.push_pin_rounded,
+                size: 11,
+                color: accentColor,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                widget.item.isLive ? 'LIVE' : 'STATIC',
+                style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: accentColor,
+                    letterSpacing: 0.8),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (mode == DateTimeMode.time || mode == DateTimeMode.datetime)
+            Text(_fmtTime(dt),
+                style: const TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.w300, color: Colors.black87)),
+          if (mode == DateTimeMode.date || mode == DateTimeMode.datetime)
+            Padding(
+              padding: EdgeInsets.only(
+                  top: mode == DateTimeMode.datetime ? 2 : 0),
+              child: Text(_fmtDate(dt),
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+            ),
+        ],
+      ),
+    );
+  }
 }
