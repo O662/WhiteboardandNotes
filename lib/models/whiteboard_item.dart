@@ -37,6 +37,17 @@ sealed class WhiteboardItem {
             text: json['text'] as String,
             color: _colorFromInt(json['color'] as int),
           ),
+        'stickyNoteStack' => StickyNoteStackItem(
+            position: Offset((json['x'] as num).toDouble(),
+                (json['y'] as num).toDouble()),
+            color: _colorFromInt(json['color'] as int),
+            notes: (json['notes'] as List<dynamic>? ?? [])
+                .map((n) => (
+                      text: n['text'] as String,
+                      color: _colorFromInt(n['color'] as int),
+                    ))
+                .toList(),
+          ),
         'image' => ImageItem(
             position: Offset((json['x'] as num).toDouble(),
                 (json['y'] as num).toDouble()),
@@ -284,6 +295,49 @@ final class StickyNoteItem extends WhiteboardItem {
         'y': position.dy,
         'text': text,
         'color': _colorToInt(color),
+      };
+}
+
+typedef StickyNoteEntry = ({String text, Color color});
+
+final class StickyNoteStackItem extends WhiteboardItem {
+  final Offset position;
+  final Color color; // base color used when notes list is empty (dispenser)
+  final List<StickyNoteEntry> notes;
+
+  const StickyNoteStackItem({
+    required this.position,
+    required this.color,
+    this.notes = const [],
+  });
+
+  Color get displayColor => notes.isNotEmpty ? notes.first.color : color;
+
+  StickyNoteStackItem withNotesReordered(int promoteIndex) {
+    final reordered = [
+      notes[promoteIndex],
+      ...notes.sublist(0, promoteIndex),
+      ...notes.sublist(promoteIndex + 1),
+    ];
+    return StickyNoteStackItem(position: position, color: color, notes: reordered);
+  }
+
+  @override
+  Rect get bounds => Rect.fromLTWH(position.dx, position.dy, 210, 170);
+
+  @override
+  StickyNoteStackItem movedBy(Offset delta) =>
+      StickyNoteStackItem(position: position + delta, color: color, notes: notes);
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'stickyNoteStack',
+        'x': position.dx,
+        'y': position.dy,
+        'color': _colorToInt(color),
+        'notes': notes
+            .map((n) => {'text': n.text, 'color': _colorToInt(n.color)})
+            .toList(),
       };
 }
 

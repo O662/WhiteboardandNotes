@@ -42,6 +42,8 @@ class WhiteboardPainter extends CustomPainter {
           _drawText(canvas, item);
         case StickyNoteItem():
           _drawStickyNote(canvas, item);
+        case StickyNoteStackItem():
+          _drawStickyNoteStack(canvas, item);
         case ShapeItem():
           _drawShapeItem(canvas, item);
         case FrameItem():
@@ -62,7 +64,7 @@ class WhiteboardPainter extends CustomPainter {
       final sel = items[selectedIndex!];
       // Rich items draw their own selection border in the overlay widget
       // Stroke selection is drawn in AnnotationPainter
-      if (sel case TextItem() || StickyNoteItem() || FrameItem() || ShapeItem()) {
+      if (sel case TextItem() || StickyNoteItem() || StickyNoteStackItem() || FrameItem() || ShapeItem()) {
         _drawSelection(canvas, sel);
       }
     }
@@ -611,6 +613,96 @@ class WhiteboardPainter extends CustomPainter {
     );
     tp.layout(maxWidth: w - 16);
     tp.paint(canvas, Offset(x + 8, y + 36));
+  }
+
+  void _drawStickyNoteStack(Canvas canvas, StickyNoteStackItem item) {
+    const w = 200.0, h = 160.0;
+    final x = item.position.dx, y = item.position.dy;
+    final hasNotes = item.notes.isNotEmpty;
+    final topColor = item.displayColor;
+    final backColor = topColor.withAlpha(170);
+
+    final layerCount = hasNotes ? item.notes.length.clamp(1, 3) : 3;
+
+    for (int i = layerCount - 1; i >= 0; i--) {
+      final dx = (layerCount - 1 - i) * 6.0;
+      final dy = i * -5.0;
+      final layerColor = i == 0
+          ? topColor
+          : (hasNotes && i < item.notes.length
+              ? item.notes[i].color.withAlpha(170)
+              : backColor);
+
+      if (i == 0) {
+        canvas.drawRRect(
+          RRect.fromLTRBR(x + dx + 3, y + dy + 3, x + dx + w + 3,
+              y + dy + h + 3, const Radius.circular(4)),
+          Paint()
+            ..color = Colors.black.withAlpha(28)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+        );
+      }
+
+      canvas.drawRRect(
+        RRect.fromLTRBR(
+            x + dx, y + dy, x + dx + w, y + dy + h, const Radius.circular(4)),
+        Paint()..color = layerColor,
+      );
+
+      if (i == 0) {
+        canvas.drawRRect(
+          RRect.fromLTRBAndCorners(x + dx, y + dy, x + dx + w, y + dy + 28,
+              topLeft: const Radius.circular(4),
+              topRight: const Radius.circular(4)),
+          Paint()..color = Colors.black.withAlpha(30),
+        );
+
+        if (hasNotes && item.notes.first.text.isNotEmpty) {
+          final tp = TextPainter(
+            text: TextSpan(
+              text: item.notes.first.text,
+              style: const TextStyle(color: Color(0xFF333333), fontSize: 14, height: 1.45),
+            ),
+            textDirection: TextDirection.ltr,
+          );
+          tp.layout(maxWidth: w - 16);
+          tp.paint(canvas, Offset(x + dx + 8, y + dy + 36));
+        } else if (!hasNotes) {
+          final tp = TextPainter(
+            text: const TextSpan(
+              text: '↓ drag to create a note',
+              style: TextStyle(
+                  color: Color(0x99333333), fontSize: 11, fontStyle: FontStyle.italic),
+            ),
+            textDirection: TextDirection.ltr,
+          );
+          tp.layout(maxWidth: w - 16);
+          tp.paint(canvas, Offset(x + dx + 8, y + dy + 36));
+        }
+
+        // Count badge
+        if (item.notes.length > 1) {
+          final badgeText = '+${item.notes.length - 1}';
+          final bp = TextPainter(
+            text: TextSpan(
+              text: badgeText,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+            ),
+            textDirection: TextDirection.ltr,
+          );
+          bp.layout();
+          final bw = bp.width + 12;
+          final bx = x + dx + w - bw - 6;
+          final by = y + dy + h - 20;
+          canvas.drawRRect(
+            RRect.fromLTRBR(bx, by, bx + bw, by + 16, const Radius.circular(8)),
+            Paint()..color = Colors.black.withAlpha(100),
+          );
+          bp.paint(canvas, Offset(bx + 6, by + 3));
+        }
+      }
+    }
   }
 
   @override

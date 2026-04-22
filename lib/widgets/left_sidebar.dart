@@ -10,9 +10,11 @@ class WhiteboardLeftSidebar extends StatelessWidget {
   final VoidCallback onMath;
   final VoidCallback onFrame;
   final VoidCallback onShape;
+  final VoidCallback onStickyNote;
   final bool mathPanelOpen;
   final bool framePanelOpen;
   final bool shapePanelOpen;
+  final bool stickyNotePanelOpen;
 
   const WhiteboardLeftSidebar({
     super.key,
@@ -24,9 +26,11 @@ class WhiteboardLeftSidebar extends StatelessWidget {
     required this.onMath,
     required this.onFrame,
     required this.onShape,
+    required this.onStickyNote,
     this.mathPanelOpen = false,
     this.framePanelOpen = false,
     this.shapePanelOpen = false,
+    this.stickyNotePanelOpen = false,
   });
 
   @override
@@ -61,9 +65,9 @@ class WhiteboardLeftSidebar extends StatelessWidget {
           ),
           _SideBtn(
             icon: Icons.sticky_note_2_outlined,
-            tooltip: 'Sticky Note',
-            selected: selectedTool == DrawingTool.stickyNote,
-            onTap: () => onToolChanged(DrawingTool.stickyNote),
+            tooltip: 'Sticky Notes',
+            selected: stickyNotePanelOpen,
+            onTap: onStickyNote,
           ),
 
           _SideBtn(
