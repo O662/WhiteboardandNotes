@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/whiteboard_screen.dart';
+import 'screens/start_screen.dart';
 
 void main() {
   runApp(const WhiteboardApp());
@@ -17,7 +17,7 @@ class WhiteboardApp extends StatelessWidget {
         colorSchemeSeed: Colors.blue,
         useMaterial3: true,
       ),
-      home: const WhiteboardScreen(),
+      home: const StartScreen(),
     );
   }
 }

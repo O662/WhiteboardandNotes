@@ -36,7 +36,20 @@ import '../widgets/insert_dialogs.dart';
 import '../widgets/selection_hint.dart';
 
 class WhiteboardScreen extends StatefulWidget {
-  const WhiteboardScreen({super.key});
+  final List<WhiteboardItem> initialItems;
+  final BackgroundStyle initialBackground;
+  final String? initialFilePath;
+  final bool skipAutosavePrompt;
+  final Matrix4? initialTransform;
+
+  const WhiteboardScreen({
+    super.key,
+    this.initialItems = const [],
+    this.initialBackground = BackgroundStyle.dots,
+    this.initialFilePath,
+    this.skipAutosavePrompt = false,
+    this.initialTransform,
+  });
 
   @override
   State<WhiteboardScreen> createState() => _WhiteboardScreenState();
@@ -105,16 +118,30 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialItems.isNotEmpty) {
+      _items.addAll(widget.initialItems);
+    }
+    _backgroundStyle = widget.initialBackground;
+    if (widget.initialFilePath != null) {
+      _currentFilePath = widget.initialFilePath;
+      _autosaveEnabled = true;
+    }
     _transformationController.addListener(_onTransform);
     _inlineTextFocus.addListener(_onInlineTextFocusChange);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final size = MediaQuery.of(context).size;
-      _transformationController.value = Matrix4.translationValues(
-        -_canvasCenter.dx + size.width / 2,
-        -_canvasCenter.dy + size.height / 2,
-        0,
-      );
-      _promptAutosaveSetup();
+      if (widget.initialTransform != null) {
+        _transformationController.value = widget.initialTransform!;
+      } else {
+        final size = MediaQuery.of(context).size;
+        _transformationController.value = Matrix4.translationValues(
+          -_canvasCenter.dx + size.width / 2,
+          -_canvasCenter.dy + size.height / 2,
+          0,
+        );
+      }
+      if (!widget.skipAutosavePrompt) {
+        _promptAutosaveSetup();
+      }
     });
   }
 
