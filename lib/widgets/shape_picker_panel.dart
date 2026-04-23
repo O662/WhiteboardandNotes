@@ -6,7 +6,8 @@ import '../models/whiteboard_item.dart';
 
 class ShapePickerPanel extends StatelessWidget {
   final void Function(ShapeType) onSelect;
-  const ShapePickerPanel({super.key, required this.onSelect});
+  final VoidCallback? onDragStarted;
+  const ShapePickerPanel({super.key, required this.onSelect, this.onDragStarted});
 
   static const _shapes = ShapeType.values;
 
@@ -55,36 +56,57 @@ class ShapePickerPanel extends StatelessWidget {
   }
 
   Widget _cell(ShapeType type) {
-    return InkWell(
-      onTap: () => onSelect(type),
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 44,
-              height: 36,
-              child: CustomPaint(
-                painter: _ShapeIconPainter(type: type),
-              ),
+    final inner = Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 44,
+            height: 36,
+            child: CustomPaint(painter: _ShapeIconPainter(type: type)),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            ShapeItem.labelFor(type),
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF333333),
             ),
-            const SizedBox(height: 4),
-            Text(
-              ShapeItem.labelFor(type),
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF333333),
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+
+    return Draggable<ShapeType>(
+      data: type,
+      onDragStarted: onDragStarted,
+      feedback: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withAlpha(60), blurRadius: 12, offset: const Offset(0, 4)),
+            ],
+          ),
+          padding: const EdgeInsets.all(10),
+          child: CustomPaint(painter: _ShapeIconPainter(type: type)),
         ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.4, child: inner),
+      child: InkWell(
+        onTap: () => onSelect(type),
+        borderRadius: BorderRadius.circular(10),
+        child: inner,
       ),
     );
   }

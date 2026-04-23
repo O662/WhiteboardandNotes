@@ -39,7 +39,7 @@ class WhiteboardPainter extends CustomPainter {
         case StrokeItem():
           break; // rendered in AnnotationPainter above the rich-item overlay
         case TextItem():
-          _drawText(canvas, item);
+          break; // rendered in the rich-item overlay so it respects z-order with images
         case StickyNoteItem():
           _drawStickyNote(canvas, item);
         case StickyNoteStackItem():
@@ -64,7 +64,7 @@ class WhiteboardPainter extends CustomPainter {
       final sel = items[selectedIndex!];
       // Rich items draw their own selection border in the overlay widget
       // Stroke selection is drawn in AnnotationPainter
-      if (sel case TextItem() || StickyNoteItem() || StickyNoteStackItem() || FrameItem() || ShapeItem()) {
+      if (sel case StickyNoteItem() || StickyNoteStackItem() || FrameItem() || ShapeItem()) {
         _drawSelection(canvas, sel);
       }
     }
@@ -527,53 +527,6 @@ class WhiteboardPainter extends CustomPainter {
     );
     tp.layout();
     tp.paint(canvas, Offset(rect.left + 6, rect.top - labelH + 4));
-  }
-
-  void _drawText(Canvas canvas, TextItem item) {
-    final decoration = TextDecoration.combine([
-      if (item.underline) TextDecoration.underline,
-      if (item.strikethrough) TextDecoration.lineThrough,
-    ]);
-    final indent = item.indentLevel * TextItem.indentStep;
-    final bulletW = item.bullet ? item.fontSize * 1.2 : 0.0;
-    final textOrigin = item.position.translate(indent + bulletW, 0);
-
-    if (item.bullet) {
-      final bp = TextPainter(
-        text: TextSpan(
-          text: '•',
-          style: TextStyle(
-            color: item.color,
-            fontSize: item.fontSize,
-            fontWeight: item.fontWeight,
-            height: item.lineHeight,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      bp.layout();
-      bp.paint(canvas, item.position.translate(indent, 0));
-    }
-
-    final tp = TextPainter(
-      text: TextSpan(
-        text: item.text,
-        style: TextStyle(
-          color: item.color,
-          fontSize: item.fontSize,
-          fontWeight: item.fontWeight,
-          fontStyle: item.fontStyle,
-          fontFamily: item.fontFamily.isEmpty ? null : item.fontFamily,
-          decoration: (item.underline || item.strikethrough) ? decoration : null,
-          decorationColor: item.color,
-          height: item.lineHeight,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      textAlign: item.textAlign,
-    );
-    tp.layout(maxWidth: 480 - indent - bulletW);
-    tp.paint(canvas, textOrigin);
   }
 
   void _drawStickyNote(Canvas canvas, StickyNoteItem item) {

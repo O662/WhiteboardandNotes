@@ -7,6 +7,10 @@ class SelectionHint extends StatelessWidget {
   final void Function(String url) onOpenLink;
   final void Function(String path) onOpenFile;
   final VoidCallback onEditTable;
+  final VoidCallback onBringToFront;
+  final VoidCallback onBringForward;
+  final VoidCallback onSendBackward;
+  final VoidCallback onSendToBack;
 
   const SelectionHint({
     super.key,
@@ -14,7 +18,23 @@ class SelectionHint extends StatelessWidget {
     required this.onOpenLink,
     required this.onOpenFile,
     required this.onEditTable,
+    required this.onBringToFront,
+    required this.onBringForward,
+    required this.onSendBackward,
+    required this.onSendToBack,
   });
+
+  Widget _layerBtn(IconData icon, String tooltip, VoidCallback onTap) =>
+      Tooltip(
+        message: tooltip,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: Icon(icon, size: 17, color: Colors.white70),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -85,9 +105,13 @@ class SelectionHint extends StatelessWidget {
         children: [
           const Text('Drag to move',
               style: TextStyle(color: Colors.white, fontSize: 13)),
+          sep,
+          _layerBtn(Icons.flip_to_back, 'Send to back', onSendToBack),
+          _layerBtn(Icons.keyboard_arrow_down, 'Send backward', onSendBackward),
+          _layerBtn(Icons.keyboard_arrow_up, 'Bring forward', onBringForward),
+          _layerBtn(Icons.flip_to_front, 'Bring to front', onBringToFront),
           ...actions,
-          const Text(' · ',
-              style: TextStyle(color: Colors.white54, fontSize: 13)),
+          sep,
           const Text('Delete to remove',
               style: TextStyle(color: Colors.white, fontSize: 13)),
         ],

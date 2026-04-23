@@ -308,69 +308,116 @@ class _SizePreset extends StatelessWidget {
   }
 }
 
-class _SelectBtn extends StatelessWidget {
+class _SelectBtn extends StatefulWidget {
   final DrawingTool selectedTool;
   final ValueChanged<DrawingTool> onToolChanged;
 
   const _SelectBtn({required this.selectedTool, required this.onToolChanged});
 
+  @override
+  State<_SelectBtn> createState() => _SelectBtnState();
+}
+
+class _SelectBtnState extends State<_SelectBtn> {
+  DrawingTool _lastTool = DrawingTool.select;
+
+  static const _selectTools = [
+    (DrawingTool.select, Icons.touch_app_rounded, 'Select'),
+    (DrawingTool.lassoSelect, Icons.gesture_rounded, 'Lasso Select'),
+    (DrawingTool.rectSelect, Icons.crop_square_rounded, 'Rect Select'),
+  ];
+
   bool get _isActive =>
-      selectedTool == DrawingTool.select ||
-      selectedTool == DrawingTool.lassoSelect ||
-      selectedTool == DrawingTool.rectSelect;
+      widget.selectedTool == DrawingTool.select ||
+      widget.selectedTool == DrawingTool.lassoSelect ||
+      widget.selectedTool == DrawingTool.rectSelect;
 
   IconData get _icon {
-    if (selectedTool == DrawingTool.lassoSelect) return Icons.gesture_rounded;
-    if (selectedTool == DrawingTool.rectSelect) return Icons.crop_square_rounded;
+    if (_lastTool == DrawingTool.lassoSelect) return Icons.gesture_rounded;
+    if (_lastTool == DrawingTool.rectSelect) return Icons.crop_square_rounded;
     return Icons.touch_app_rounded;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final items = [
-      (DrawingTool.select, Icons.touch_app_rounded, 'Select'),
-      (DrawingTool.lassoSelect, Icons.gesture_rounded, 'Lasso Select'),
-      (DrawingTool.rectSelect, Icons.crop_square_rounded, 'Rect Select'),
-    ];
-    return PopupMenuButton<DrawingTool>(
-      tooltip: 'Select',
-      padding: EdgeInsets.zero,
-      onSelected: onToolChanged,
-      itemBuilder: (_) => [
-        for (final (tool, icon, label) in items)
+  void _handleTap(BuildContext ctx) {
+    if (!_isActive) {
+      widget.onToolChanged(_lastTool);
+    } else {
+      _showMenu(ctx);
+    }
+  }
+
+  Future<void> _showMenu(BuildContext ctx) async {
+    final box = ctx.findRenderObject()! as RenderBox;
+    final overlay = Overlay.of(ctx).context.findRenderObject()! as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero, ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+    final tool = await showMenu<DrawingTool>(
+      context: ctx,
+      position: position,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      elevation: 4,
+      color: Colors.white,
+      items: [
+        for (final (t, icon, label) in _selectTools)
           PopupMenuItem(
-            value: tool,
+            value: t,
             child: Row(children: [
               Icon(icon, size: 18,
-                  color: selectedTool == tool ? Colors.blue : Colors.black87),
+                  color: widget.selectedTool == t ? Colors.blue : Colors.black87),
               const SizedBox(width: 10),
               Text(label,
                   style: TextStyle(
-                      color: selectedTool == tool ? Colors.blue : Colors.black87,
-                      fontWeight: selectedTool == tool
+                      color: widget.selectedTool == t ? Colors.blue : Colors.black87,
+                      fontWeight: widget.selectedTool == t
                           ? FontWeight.w600
                           : FontWeight.normal)),
             ]),
           ),
       ],
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: _isActive ? Colors.blue.withAlpha(30) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+    );
+    if (tool != null) {
+      setState(() => _lastTool = tool);
+      widget.onToolChanged(tool);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => _handleTap(context),
+      child: Tooltip(
+        message: 'Select',
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: _isActive ? Colors.blue.withAlpha(30) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(_icon, size: 20,
+              color: _isActive ? Colors.blue : Colors.black87),
         ),
-        child: Icon(_icon, size: 20,
-            color: _isActive ? Colors.blue : Colors.black87),
       ),
     );
   }
 }
 
-class _EraserBtn extends StatelessWidget {
+class _EraserBtn extends StatefulWidget {
   final DrawingTool selectedTool;
   final ValueChanged<DrawingTool> onToolChanged;
 
   const _EraserBtn({required this.selectedTool, required this.onToolChanged});
+
+  @override
+  State<_EraserBtn> createState() => _EraserBtnState();
+}
+
+class _EraserBtnState extends State<_EraserBtn> {
+  DrawingTool _lastTool = DrawingTool.strokeEraser;
 
   static const _eraserTools = [
     (DrawingTool.strokeEraser, Icons.auto_fix_normal_rounded, 'Eraser'),
@@ -379,49 +426,71 @@ class _EraserBtn extends StatelessWidget {
   ];
 
   bool get _isActive =>
-      selectedTool == DrawingTool.eraser ||
-      selectedTool == DrawingTool.strokeEraser ||
-      selectedTool == DrawingTool.lineDelete;
+      widget.selectedTool == DrawingTool.eraser ||
+      widget.selectedTool == DrawingTool.strokeEraser ||
+      widget.selectedTool == DrawingTool.lineDelete;
 
   IconData get _icon {
     for (final (tool, icon, _) in _eraserTools) {
-      if (tool == selectedTool) return icon;
+      if (tool == _lastTool) return icon;
     }
     return Icons.auto_fix_normal_rounded;
   }
 
+  void _handleTap(BuildContext ctx) {
+    if (!_isActive) {
+      widget.onToolChanged(_lastTool);
+    } else {
+      _showMenu(ctx);
+    }
+  }
+
+  Future<void> _showMenu(BuildContext ctx) async {
+    final box = ctx.findRenderObject()! as RenderBox;
+    final overlay = Overlay.of(ctx).context.findRenderObject()! as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero, ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+    final tool = await showMenu<DrawingTool>(
+      context: ctx,
+      position: position,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      elevation: 4,
+      color: Colors.white,
+      items: [
+        for (final (t, icon, label) in _eraserTools)
+          PopupMenuItem(
+            value: t,
+            child: Row(children: [
+              Icon(icon, size: 18,
+                  color: widget.selectedTool == t ? Colors.blue : Colors.black87),
+              const SizedBox(width: 10),
+              Text(label,
+                  style: TextStyle(
+                      color: widget.selectedTool == t ? Colors.blue : Colors.black87,
+                      fontWeight: widget.selectedTool == t
+                          ? FontWeight.w600
+                          : FontWeight.normal)),
+            ]),
+          ),
+      ],
+    );
+    if (tool != null) {
+      setState(() => _lastTool = tool);
+      widget.onToolChanged(tool);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: Theme.of(context).copyWith(
-        popupMenuTheme: PopupMenuThemeData(
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
-          elevation: 4,
-          color: Colors.white,
-        ),
-      ),
-      child: PopupMenuButton<DrawingTool>(
-        tooltip: 'Eraser',
-        padding: EdgeInsets.zero,
-        onSelected: onToolChanged,
-        itemBuilder: (_) => [
-          for (final (tool, icon, label) in _eraserTools)
-            PopupMenuItem(
-              value: tool,
-              child: Row(children: [
-                Icon(icon, size: 18,
-                    color: selectedTool == tool ? Colors.blue : Colors.black87),
-                const SizedBox(width: 10),
-                Text(label,
-                    style: TextStyle(
-                        color: selectedTool == tool ? Colors.blue : Colors.black87,
-                        fontWeight: selectedTool == tool
-                            ? FontWeight.w600
-                            : FontWeight.normal)),
-              ]),
-            ),
-        ],
+    return GestureDetector(
+      onTap: () => _handleTap(context),
+      child: Tooltip(
+        message: 'Eraser',
         child: Container(
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(

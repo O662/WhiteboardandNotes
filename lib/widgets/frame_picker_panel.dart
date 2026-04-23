@@ -4,7 +4,8 @@ import '../models/whiteboard_item.dart';
 
 class FramePickerPanel extends StatelessWidget {
   final void Function(FrameType) onSelect;
-  const FramePickerPanel({super.key, required this.onSelect});
+  final VoidCallback? onDragStarted;
+  const FramePickerPanel({super.key, required this.onSelect, this.onDragStarted});
 
   @override
   Widget build(BuildContext context) {
@@ -91,41 +92,70 @@ class FramePickerPanel extends StatelessWidget {
     final pw = ar >= 1 ? maxDim : maxDim * ar;
     final ph = ar <= 1 ? maxDim : maxDim / ar;
 
-    return InkWell(
-      onTap: () => onSelect(type),
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: pw + 4,
-              height: ph + 4,
-              child: CustomPaint(
-                painter: _FrameIconPainter(type: type),
+    final inner = Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: pw + 4,
+            height: ph + 4,
+            child: CustomPaint(painter: _FrameIconPainter(type: type)),
+          ),
+          const SizedBox(height: 5),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF333333),
               ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 5),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFF333333),
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+          ),
+        ],
+      ),
+    );
+
+    final feedbackW = (pw * 2).clamp(40.0, 72.0);
+    final feedbackH = (ph * 2).clamp(40.0, 72.0);
+
+    return Draggable<FrameType>(
+      data: type,
+      onDragStarted: onDragStarted,
+      feedback: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withAlpha(60), blurRadius: 12, offset: const Offset(0, 4)),
+            ],
+          ),
+          child: Center(
+            child: SizedBox(
+              width: feedbackW,
+              height: feedbackH,
+              child: CustomPaint(painter: _FrameIconPainter(type: type)),
             ),
-          ],
+          ),
         ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.4, child: inner),
+      child: InkWell(
+        onTap: () => onSelect(type),
+        borderRadius: BorderRadius.circular(10),
+        child: inner,
       ),
     );
   }

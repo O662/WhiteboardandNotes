@@ -7,7 +7,8 @@ import '../models/whiteboard_item.dart';
 class MathPanel extends StatefulWidget {
   final void Function(MathGraphType) onInsert;
   final void Function(String) onInsertEquation;
-  const MathPanel({super.key, required this.onInsert, required this.onInsertEquation});
+  final VoidCallback? onDragStarted;
+  const MathPanel({super.key, required this.onInsert, required this.onInsertEquation, this.onDragStarted});
 
   @override
   State<MathPanel> createState() => _MathPanelState();
@@ -201,6 +202,7 @@ class _MathPanelState extends State<MathPanel> {
             for (final (type, label, icon, color) in _graphItems)
               Draggable<MathGraphType>(
                 data: type,
+                onDragStarted: widget.onDragStarted,
                 feedback: Material(
                   color: Colors.transparent,
                   child: _MathTile(label: label, icon: icon, color: color, size: 82),

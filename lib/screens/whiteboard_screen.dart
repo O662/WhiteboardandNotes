@@ -114,6 +114,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
         -_canvasCenter.dy + size.height / 2,
         0,
       );
+      _promptAutosaveSetup();
     });
   }
 
@@ -576,6 +577,48 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     _scheduleAutosave();
   }
 
+  void _bringToFront(int index) {
+    if (index < 0 || index >= _items.length - 1) return;
+    setState(() {
+      _items.add(_items.removeAt(index));
+      _selectedIndex = _items.length - 1;
+      _redoStack.clear();
+    });
+    _scheduleAutosave();
+  }
+
+  void _sendToBack(int index) {
+    if (index <= 0 || index >= _items.length) return;
+    setState(() {
+      _items.insert(0, _items.removeAt(index));
+      _selectedIndex = 0;
+      _redoStack.clear();
+    });
+    _scheduleAutosave();
+  }
+
+  void _bringForward(int index) {
+    if (index < 0 || index >= _items.length - 1) return;
+    setState(() {
+      final item = _items.removeAt(index);
+      _items.insert(index + 1, item);
+      _selectedIndex = index + 1;
+      _redoStack.clear();
+    });
+    _scheduleAutosave();
+  }
+
+  void _sendBackward(int index) {
+    if (index <= 0 || index >= _items.length) return;
+    setState(() {
+      final item = _items.removeAt(index);
+      _items.insert(index - 1, item);
+      _selectedIndex = index - 1;
+      _redoStack.clear();
+    });
+    _scheduleAutosave();
+  }
+
   // ── Save / Open / New ─────────────────────────────────────────────────────
 
   Map<String, dynamic> _boardData() {
@@ -794,6 +837,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               child: const Text('Cancel')),
           FilledButton(
             onPressed: () {
+              Navigator.pop(ctx);
               _autosaveTimer?.cancel();
               setState(() {
                 _items.clear();
@@ -803,13 +847,95 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                 _autosaveEnabled = false;
               });
               _zoomReset();
-              Navigator.pop(ctx);
+              _promptAutosaveSetup();
             },
             child: const Text('New board'),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _promptAutosaveSetup() async {
+    if (!mounted) return;
+
+    if (Platform.isAndroid || Platform.isIOS) {
+      final controller = TextEditingController(text: 'board');
+      final save = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Save your board'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Name your board to enable autosave.'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  labelText: 'Board name',
+                  suffixText: '.bord',
+                ),
+                autofocus: true,
+                onSubmitted: (_) => Navigator.pop(ctx, true),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Continue without Autosave'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save & Autosave'),
+            ),
+          ],
+        ),
+      );
+      if (save == true && mounted) {
+        final name = controller.text.trim();
+        final sanitized = name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+        if (sanitized.isNotEmpty) {
+          final dir = await getApplicationDocumentsDirectory();
+          final path = '${dir.path}/$sanitized.bord';
+          await File(path).writeAsString(jsonEncode(_boardData()));
+          if (mounted) setState(() { _currentFilePath = path; _autosaveEnabled = true; });
+        }
+      }
+    } else {
+      final save = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Save your board'),
+          content: const Text('Choose a save location to enable autosave.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Continue without Autosave'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Choose Location'),
+            ),
+          ],
+        ),
+      );
+      if (save == true && mounted) {
+        final path = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save board',
+          fileName: 'board.bord',
+          type: FileType.custom,
+          allowedExtensions: ['bord'],
+        );
+        if (path != null && mounted) {
+          final finalPath = path.endsWith('.bord') ? path : '$path.bord';
+          await File(finalPath).writeAsString(jsonEncode(_boardData()));
+          setState(() { _currentFilePath = finalPath; _autosaveEnabled = true; });
+        }
+      }
+    }
   }
 
   // ── Viewport helper ───────────────────────────────────────────────────────
@@ -959,62 +1085,43 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
 
   // ── Insert ─────────────────────────────────────────────────────────────────
 
-  void _showInsertMenu() {
-    setState(() => _showInsertPanel = !_showInsertPanel);
+  void _closeAllPanels() {
+    _showInsertPanel = false;
+    _showMathPanel = false;
+    _showFramePanel = false;
+    _showShapePanel = false;
+    _showStickyNotePanel = false;
   }
 
-  void _closeInsertPanel() {
-    setState(() => _showInsertPanel = false);
+  void _showInsertMenu() {
+    setState(() { final open = !_showInsertPanel; _closeAllPanels(); _showInsertPanel = open; });
   }
+
+  void _closeInsertPanel() => setState(() => _showInsertPanel = false);
 
   void _toggleMathPanel() {
-    setState(() {
-      _showMathPanel = !_showMathPanel;
-      if (_showMathPanel) _showInsertPanel = false;
-    });
+    setState(() { final open = !_showMathPanel; _closeAllPanels(); _showMathPanel = open; });
   }
 
   void _closeMathPanel() => setState(() => _showMathPanel = false);
 
   void _showFrameMenu() {
-    setState(() {
-      _showFramePanel = !_showFramePanel;
-      if (_showFramePanel) {
-        _showInsertPanel = false;
-        _showMathPanel = false;
-      }
-    });
+    setState(() { final open = !_showFramePanel; _closeAllPanels(); _showFramePanel = open; });
   }
 
   void _closeFramePanel() => setState(() => _showFramePanel = false);
 
   void _showShapeMenu() {
-    setState(() {
-      _showShapePanel = !_showShapePanel;
-      if (_showShapePanel) {
-        _showInsertPanel = false;
-        _showMathPanel = false;
-        _showFramePanel = false;
-      }
-    });
+    setState(() { final open = !_showShapePanel; _closeAllPanels(); _showShapePanel = open; });
   }
 
   void _closeShapePanel() => setState(() => _showShapePanel = false);
 
   void _showStickyNoteMenu() {
-    setState(() {
-      _showStickyNotePanel = !_showStickyNotePanel;
-      if (_showStickyNotePanel) {
-        _showInsertPanel = false;
-        _showMathPanel = false;
-        _showFramePanel = false;
-        _showShapePanel = false;
-      }
-    });
+    setState(() { final open = !_showStickyNotePanel; _closeAllPanels(); _showStickyNotePanel = open; });
   }
 
-  void _closeStickyNotePanel() =>
-      setState(() => _showStickyNotePanel = false);
+  void _closeStickyNotePanel() => setState(() => _showStickyNotePanel = false);
 
   Future<void> _configureAndInsertShape(ShapeType type) async {
     final result = await showShapeConfigDialog(context, type, _color, _strokeWidth);
@@ -1068,6 +1175,60 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       graphType: type,
       position: canvasCenter - Offset(temp.width / 2, temp.height / 2),
     ));
+  }
+
+  void _placeShape(ShapeType type, Offset screenPoint) {
+    final pos = _toCanvas(screenPoint);
+    const size = 150.0;
+    _addItem(ShapeItem(
+      position: pos - Offset(size / 2, type == ShapeType.line ? 0 : size / 2),
+      shapeType: type,
+      width: size,
+      height: type == ShapeType.line ? 0 : size,
+      strokeColor: _color,
+      strokeWidth: _strokeWidth,
+      filled: false,
+      fillColor: Colors.transparent,
+    ));
+  }
+
+  void _placeFrame(FrameType type, Offset screenPoint) {
+    final pos = _toCanvas(screenPoint);
+    final w = FrameItem.defaultWidth(type);
+    final h = FrameItem.defaultHeight(type);
+    _addItem(FrameItem(
+      position: pos - Offset(w / 2, h / 2),
+      frameType: type,
+    ));
+  }
+
+  void _placeInsertItem(InsertDragType type, Offset screenPoint) {
+    final pos = _toCanvas(screenPoint);
+    switch (type) {
+      case InsertDragType.table:
+        const rows = 3, cols = 3;
+        final w = (cols * 100.0).clamp(200.0, 800.0);
+        final h = rows * 36.0 + 4.0;
+        _addItem(TableItem.empty(position: pos - Offset(w / 2, h / 2), rows: rows, cols: cols));
+      case InsertDragType.checklist:
+        _addItem(ChecklistItem(position: pos - const Offset(ChecklistItem.cardWidth / 2, 63)));
+      case InsertDragType.liveTime:
+        final w = DateTimeItem.widthFor(DateTimeMode.time);
+        final h = DateTimeItem.heightFor(DateTimeMode.time);
+        _addItem(DateTimeItem(position: pos - Offset(w / 2, h / 2), mode: DateTimeMode.time, isLive: true, createdAt: DateTime.now()));
+      case InsertDragType.liveDate:
+        final w = DateTimeItem.widthFor(DateTimeMode.date);
+        final h = DateTimeItem.heightFor(DateTimeMode.date);
+        _addItem(DateTimeItem(position: pos - Offset(w / 2, h / 2), mode: DateTimeMode.date, isLive: true, createdAt: DateTime.now()));
+      case InsertDragType.liveClock:
+        final w = DateTimeItem.widthFor(DateTimeMode.datetime);
+        final h = DateTimeItem.heightFor(DateTimeMode.datetime);
+        _addItem(DateTimeItem(position: pos - Offset(w / 2, h / 2), mode: DateTimeMode.datetime, isLive: true, createdAt: DateTime.now()));
+      case InsertDragType.timestamp:
+        final w = DateTimeItem.widthFor(DateTimeMode.datetime);
+        final h = DateTimeItem.heightFor(DateTimeMode.datetime);
+        _addItem(DateTimeItem(position: pos - Offset(w / 2, h / 2), mode: DateTimeMode.datetime, isLive: false, createdAt: DateTime.now()));
+    }
   }
 
   Future<void> _insertImage() async {
@@ -1347,8 +1508,38 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               item is PrintoutItem ||
               item is MathGraphItem ||
               item is ChecklistItem ||
-              item is DateTimeItem)
+              item is DateTimeItem ||
+              item is TextItem)
             _buildRichOverlayItem(item, index, matrix, scale),
+      ],
+    );
+  }
+
+  Widget _buildTextOverlayContent(TextItem item, double scale) {
+    final scaledSize = item.fontSize * scale;
+    final indent = item.indentLevel * TextItem.indentStep * scale;
+    final decoration = TextDecoration.combine([
+      if (item.underline) TextDecoration.underline,
+      if (item.strikethrough) TextDecoration.lineThrough,
+    ]);
+    final style = TextStyle(
+      color: item.color,
+      fontSize: scaledSize,
+      fontWeight: item.fontWeight,
+      fontStyle: item.fontStyle,
+      fontFamily: item.fontFamily.isEmpty ? null : item.fontFamily,
+      decoration: (item.underline || item.strikethrough) ? decoration : null,
+      decorationColor: item.color,
+      height: item.lineHeight,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (indent > 0) SizedBox(width: indent),
+        if (item.bullet)
+          Text('• ', style: style),
+        Flexible(child: Text(item.text, style: style, textAlign: item.textAlign)),
       ],
     );
   }
@@ -1376,6 +1567,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
           },
         ),
       final DateTimeItem i => DateTimeCard(item: i),
+      final TextItem i => _buildTextOverlayContent(i, scale),
       _ => const SizedBox.shrink(),
     };
 
@@ -1925,6 +2117,10 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                   onOpenLink: _openLink,
                   onOpenFile: _openFile,
                   onEditTable: () => _editTable(_selectedIndex!),
+                  onBringToFront: () => _bringToFront(_selectedIndex!),
+                  onBringForward: () => _bringForward(_selectedIndex!),
+                  onSendBackward: () => _sendBackward(_selectedIndex!),
+                  onSendToBack: () => _sendToBack(_selectedIndex!),
                 )),
               ),
 
@@ -2006,31 +2202,13 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                 );
               }),
 
-            // ── Math graph drop target ───────────────────────────────────────
-            Positioned.fill(
-              child: DragTarget<MathGraphType>(
-                onAcceptWithDetails: (details) {
-                  _placeMathGraph(details.data, details.offset);
-                  _closeMathPanel();
-                },
-                builder: (ctx, candidateData, _) => IgnorePointer(
-                  ignoring: candidateData.isEmpty,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
-                    color: candidateData.isNotEmpty
-                        ? Colors.blue.withAlpha(12)
-                        : Colors.transparent,
-                  ),
-                ),
-              ),
-            ),
-
             // ── Math panel barrier + flyout ──────────────────────────────────
             if (_showMathPanel) ...[
-              Positioned.fill(
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
                 child: GestureDetector(
                   onTap: _closeMathPanel,
-                  behavior: HitTestBehavior.translucent,
+                  behavior: HitTestBehavior.opaque,
                 ),
               ),
               Positioned(
@@ -2047,6 +2225,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                       _closeMathPanel();
                       _insertEquationText(eq);
                     },
+                    onDragStarted: _closeMathPanel,
                   ),
                 ),
               ),
@@ -2191,10 +2370,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
 
             // ── Shape picker barrier + flyout ────────────────────────────────
             if (_showShapePanel) ...[
-              Positioned.fill(
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
                 child: GestureDetector(
                   onTap: _closeShapePanel,
-                  behavior: HitTestBehavior.translucent,
+                  behavior: HitTestBehavior.opaque,
                 ),
               ),
               Positioned(
@@ -2207,6 +2387,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                       _closeShapePanel();
                       _configureAndInsertShape(type);
                     },
+                    onDragStarted: _closeShapePanel,
                   ),
                 ),
               ),
@@ -2214,10 +2395,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
 
             // ── Frame picker barrier + flyout ────────────────────────────────
             if (_showFramePanel) ...[
-              Positioned.fill(
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
                 child: GestureDetector(
                   onTap: _closeFramePanel,
-                  behavior: HitTestBehavior.translucent,
+                  behavior: HitTestBehavior.opaque,
                 ),
               ),
               Positioned(
@@ -2230,6 +2412,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                       _closeFramePanel();
                       _insertFrame(type);
                     },
+                    onDragStarted: _closeFramePanel,
                   ),
                 ),
               ),
@@ -2237,10 +2420,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
 
             // ── Insert panel barrier + flyout ────────────────────────────────
             if (_showInsertPanel) ...[
-              Positioned.fill(
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
                 child: GestureDetector(
                   onTap: _closeInsertPanel,
-                  behavior: HitTestBehavior.translucent,
+                  behavior: HitTestBehavior.opaque,
                 ),
               ),
               Positioned(
@@ -2261,6 +2445,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                     onLiveDate: () { _closeInsertPanel(); _insertDateTime(DateTimeMode.date, true); },
                     onLiveClock: () { _closeInsertPanel(); _insertDateTime(DateTimeMode.datetime, true); },
                     onTimestamp: () { _closeInsertPanel(); _insertDateTime(DateTimeMode.datetime, false); },
+                    onDragStarted: _closeInsertPanel,
                     onGenerate: () {
                       _closeInsertPanel();
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -2277,10 +2462,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
 
             // ── Sticky note panel barrier + flyout ──────────────────────────
             if (_showStickyNotePanel) ...[
-              Positioned.fill(
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
                 child: GestureDetector(
                   onTap: _closeStickyNotePanel,
-                  behavior: HitTestBehavior.translucent,
+                  behavior: HitTestBehavior.opaque,
                 ),
               ),
               Positioned(
@@ -2290,6 +2476,76 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                 child: Center(child: const StickyNotePickerPanel()),
               ),
             ],
+
+            // ── Drop targets (above panels so barriers don't block them) ────
+            Positioned.fill(
+              child: DragTarget<MathGraphType>(
+                onAcceptWithDetails: (details) {
+                  _placeMathGraph(details.data, details.offset);
+                  _closeMathPanel();
+                },
+                builder: (ctx, candidateData, _) => IgnorePointer(
+                  ignoring: candidateData.isEmpty,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    color: candidateData.isNotEmpty
+                        ? Colors.blue.withAlpha(12)
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DragTarget<ShapeType>(
+                onAcceptWithDetails: (details) {
+                  _placeShape(details.data, details.offset);
+                  _closeShapePanel();
+                },
+                builder: (ctx, candidateData, _) => IgnorePointer(
+                  ignoring: candidateData.isEmpty,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    color: candidateData.isNotEmpty
+                        ? Colors.blue.withAlpha(12)
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DragTarget<FrameType>(
+                onAcceptWithDetails: (details) {
+                  _placeFrame(details.data, details.offset);
+                  _closeFramePanel();
+                },
+                builder: (ctx, candidateData, _) => IgnorePointer(
+                  ignoring: candidateData.isEmpty,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    color: candidateData.isNotEmpty
+                        ? Colors.blue.withAlpha(12)
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DragTarget<InsertDragType>(
+                onAcceptWithDetails: (details) {
+                  _placeInsertItem(details.data, details.offset);
+                  _closeInsertPanel();
+                },
+                builder: (ctx, candidateData, _) => IgnorePointer(
+                  ignoring: candidateData.isEmpty,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    color: candidateData.isNotEmpty
+                        ? Colors.blue.withAlpha(12)
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
 
             // ── Drag-target for sticky note panel drops ──────────────────────
             Positioned.fill(
