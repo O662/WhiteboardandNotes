@@ -34,6 +34,8 @@ import '../widgets/share_button.dart';
 import '../widgets/item_cards.dart';
 import '../widgets/insert_dialogs.dart';
 import '../widgets/selection_hint.dart';
+import '../widgets/page_strip.dart';
+import '../models/whiteboard_page.dart';
 
 class WhiteboardScreen extends StatefulWidget {
   final List<WhiteboardItem> initialItems;
@@ -58,6 +60,8 @@ class WhiteboardScreen extends StatefulWidget {
 class _WhiteboardScreenState extends State<WhiteboardScreen> {
   final _transformationController = TransformationController();
   final List<WhiteboardItem> _items = [];
+  final List<WhiteboardPage> _pages = [];
+  int _currentPageIndex = 0;
   final _rulerKey = GlobalKey<RulerOverlayState>();
   final _boardCaptureKey = GlobalKey();
   final List<WhiteboardItem> _redoStack = [];
@@ -118,6 +122,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   @override
   void initState() {
     super.initState();
+    _pages.add(WhiteboardPage(name: 'Page 1', background: widget.initialBackground));
     if (widget.initialItems.isNotEmpty) {
       _items.addAll(widget.initialItems);
     }
@@ -646,19 +651,129 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     _scheduleAutosave();
   }
 
-  // ── Save / Open / New ─────────────────────────────────────────────────────
+  // ── Pages ─────────────────────────────────────────────────────────────────
 
-  Map<String, dynamic> _boardData() {
+  void _saveCurrentPageState() {
     final matrix = _transformationController.value;
-    return {
-      'version': 1,
-      'background': _backgroundStyle.name,
-      'items': _items.map((i) => i.toJson()).toList(),
-      'transform': {
+    _pages[_currentPageIndex] = WhiteboardPage(
+      name: _pages[_currentPageIndex].name,
+      items: List.from(_items),
+      background: _backgroundStyle,
+      savedTransform: {
         'tx': matrix.entry(0, 3),
         'ty': matrix.entry(1, 3),
         'scale': matrix.entry(0, 0),
       },
+    );
+  }
+
+  void _switchToPage(int index) {
+    if (index == _currentPageIndex) return;
+    _saveCurrentPageState();
+    final page = _pages[index];
+    setState(() {
+      _currentPageIndex = index;
+      _selectedIndex = null;
+      _redoStack.clear();
+      _items
+        ..clear()
+        ..addAll(page.items);
+      _backgroundStyle = page.background;
+    });
+    final saved = page.savedTransform;
+    if (saved != null) {
+      final scale = (saved['scale'] as num).toDouble();
+      _transformationController.value = Matrix4.identity()
+        ..setEntry(0, 0, scale)
+        ..setEntry(1, 1, scale)
+        ..setEntry(0, 3, (saved['tx'] as num).toDouble())
+        ..setEntry(1, 3, (saved['ty'] as num).toDouble());
+    } else {
+      _zoomReset();
+    }
+  }
+
+  void _addPage() {
+    _saveCurrentPageState();
+    final newPage = WhiteboardPage(
+      name: 'Page ${_pages.length + 1}',
+      background: _backgroundStyle,
+    );
+    setState(() {
+      _pages.add(newPage);
+      _currentPageIndex = _pages.length - 1;
+      _selectedIndex = null;
+      _redoStack.clear();
+      _items.clear();
+      _backgroundStyle = BackgroundStyle.dots;
+    });
+    _zoomReset();
+    _scheduleAutosave();
+  }
+
+  void _deletePage(int index) {
+    if (_pages.length <= 1) return;
+    _saveCurrentPageState();
+    setState(() {
+      _pages.removeAt(index);
+      if (_currentPageIndex >= _pages.length) {
+        _currentPageIndex = _pages.length - 1;
+      }
+      final page = _pages[_currentPageIndex];
+      _selectedIndex = null;
+      _redoStack.clear();
+      _items
+        ..clear()
+        ..addAll(page.items);
+      _backgroundStyle = page.background;
+    });
+    _scheduleAutosave();
+  }
+
+  Future<void> _renamePage(int index) async {
+    final controller =
+        TextEditingController(text: _pages[index].name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename page'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Page name'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('Rename')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    setState(() {
+      _pages[index] = WhiteboardPage(
+        name: name,
+        items: _pages[index].items,
+        background: _pages[index].background,
+        savedTransform: _pages[index].savedTransform,
+      );
+    });
+    _scheduleAutosave();
+  }
+
+  // ── Save / Open / New ─────────────────────────────────────────────────────
+
+  Map<String, dynamic> _boardData() {
+    _saveCurrentPageState();
+    return {
+      'version': 2,
+      'currentPage': _currentPageIndex,
+      'pages': _pages.map((p) => p.toJson()).toList(),
     };
   }
 
@@ -763,6 +878,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   }
 
   Future<void> _openBoard() async {
+    final screenSize = MediaQuery.of(context).size;
     try {
       String? filePath;
       String content;
@@ -813,35 +929,67 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
         content = await File(file.path!).readAsString();
       }
       final json = jsonDecode(content) as Map<String, dynamic>;
+      final version = json['version'] as int? ?? 1;
 
-      final items = (json['items'] as List)
-          .map((i) => WhiteboardItem.fromJson(i as Map<String, dynamic>))
-          .toList();
+      List<WhiteboardPage> pages;
+      int currentPage = 0;
+      Matrix4 transform;
 
-      final bg = BackgroundStyle.values.firstWhere(
-        (s) => s.name == json['background'],
-        orElse: () => BackgroundStyle.dots,
-      );
-
-      final t = json['transform'] as Map<String, dynamic>;
-      final scale = (t['scale'] as num).toDouble();
-      final m = Matrix4.identity()
-        ..setEntry(0, 0, scale)
-        ..setEntry(1, 1, scale)
-        ..setEntry(2, 2, 1)
-        ..setEntry(0, 3, (t['tx'] as num).toDouble())
-        ..setEntry(1, 3, (t['ty'] as num).toDouble());
+      if (version >= 2) {
+        pages = (json['pages'] as List)
+            .map((p) => WhiteboardPage.fromJson(p as Map<String, dynamic>))
+            .toList();
+        if (pages.isEmpty) pages.add(WhiteboardPage(name: 'Page 1'));
+        currentPage =
+            (json['currentPage'] as int? ?? 0).clamp(0, pages.length - 1);
+        final saved = pages[currentPage].savedTransform;
+        if (saved != null) {
+          final scale = (saved['scale'] as num).toDouble();
+          transform = Matrix4.identity()
+            ..setEntry(0, 0, scale)
+            ..setEntry(1, 1, scale)
+            ..setEntry(0, 3, (saved['tx'] as num).toDouble())
+            ..setEntry(1, 3, (saved['ty'] as num).toDouble());
+        } else {
+          transform = Matrix4.translationValues(
+            -_canvasCenter.dx + screenSize.width / 2,
+            -_canvasCenter.dy + screenSize.height / 2,
+            0,
+          );
+        }
+      } else {
+        // v1: wrap single-page data in a WhiteboardPage
+        final items = (json['items'] as List)
+            .map((i) => WhiteboardItem.fromJson(i as Map<String, dynamic>))
+            .toList();
+        final bg = BackgroundStyle.values.firstWhere(
+          (s) => s.name == (json['background'] as String? ?? ''),
+          orElse: () => BackgroundStyle.dots,
+        );
+        final t = json['transform'] as Map<String, dynamic>;
+        final scale = (t['scale'] as num).toDouble();
+        transform = Matrix4.identity()
+          ..setEntry(0, 0, scale)
+          ..setEntry(1, 1, scale)
+          ..setEntry(0, 3, (t['tx'] as num).toDouble())
+          ..setEntry(1, 3, (t['ty'] as num).toDouble());
+        pages = [WhiteboardPage(name: 'Page 1', items: items, background: bg)];
+      }
 
       setState(() {
         _currentFilePath = filePath;
+        _pages
+          ..clear()
+          ..addAll(pages);
+        _currentPageIndex = currentPage;
         _items
           ..clear()
-          ..addAll(items);
-        _backgroundStyle = bg;
+          ..addAll(_pages[_currentPageIndex].items);
+        _backgroundStyle = _pages[_currentPageIndex].background;
         _selectedIndex = null;
         _redoStack.clear();
       });
-      _transformationController.value = m;
+      _transformationController.value = transform;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -867,7 +1015,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               Navigator.pop(ctx);
               _autosaveTimer?.cancel();
               setState(() {
+                _pages.clear();
+                _pages.add(WhiteboardPage(name: 'Page 1'));
+                _currentPageIndex = 0;
                 _items.clear();
+                _backgroundStyle = BackgroundStyle.dots;
                 _redoStack.clear();
                 _selectedIndex = null;
                 _currentFilePath = null;
@@ -2114,6 +2266,20 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                   shapePanelOpen: _showShapePanel,
                   stickyNotePanelOpen: _showStickyNotePanel,
                 ),
+              ),
+            ),
+
+            // ── Page strip — bottom left ────────────────────────────────────
+            Positioned(
+              bottom: pad.bottom + 16,
+              left: 16,
+              child: PageStrip(
+                pageNames: _pages.map((p) => p.name).toList(),
+                currentIndex: _currentPageIndex,
+                onSwitch: _switchToPage,
+                onAdd: _addPage,
+                onDelete: _deletePage,
+                onRename: _renamePage,
               ),
             ),
 
