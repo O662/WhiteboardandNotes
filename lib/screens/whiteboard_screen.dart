@@ -2053,6 +2053,7 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               top: pad.top + 12,
               left: 16,
               child: BordLogo(
+              onHome: () => Navigator.maybePop(context),
               onNew: _newBoard,
               onOpen: _openBoard,
               onSave: _saveBoard,

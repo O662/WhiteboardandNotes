@@ -7,6 +7,7 @@ class BordLogo extends StatelessWidget {
   final VoidCallback onClear;
   final bool autosaveEnabled;
   final VoidCallback onToggleAutosave;
+  final VoidCallback onHome;
 
   const BordLogo({
     super.key,
@@ -16,6 +17,7 @@ class BordLogo extends StatelessWidget {
     required this.onClear,
     required this.autosaveEnabled,
     required this.onToggleAutosave,
+    required this.onHome,
   });
 
   void _showMenu(BuildContext context) async {
@@ -37,6 +39,15 @@ class BordLogo extends StatelessWidget {
       position: position,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       items: [
+        PopupMenuItem(
+          value: 'home',
+          child: Row(children: const [
+            Icon(Icons.home_outlined, size: 18, color: Colors.black87),
+            SizedBox(width: 10),
+            Text('Home'),
+          ]),
+        ),
+        const PopupMenuDivider(),
         PopupMenuItem(
           value: 'new',
           child: Row(children: const [
@@ -106,6 +117,7 @@ class BordLogo extends StatelessWidget {
       ],
     );
 
+    if (result == 'home') onHome();
     if (result == 'new') onNew();
     if (result == 'open') onOpen();
     if (result == 'save') onSave();

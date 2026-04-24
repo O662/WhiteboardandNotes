@@ -17,29 +17,37 @@ class StartScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 600),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildHeader(),
-                  const SizedBox(height: 36),
-                  _buildNewBoardButton(context),
-                  const SizedBox(height: 32),
-                  _buildTemplatesSection(context),
-                  const SizedBox(height: 24),
-                  _buildOpenBoardButton(context),
-                  const SizedBox(height: 16),
-                ],
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // Dot background — matches whiteboard aesthetic
+          Positioned.fill(
+            child: CustomPaint(painter: _DotBackgroundPainter()),
+          ),
+          SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 600),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 40),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 36),
+                      _buildNewBoardButton(context),
+                      const SizedBox(height: 12),
+                      _buildOpenBoardButton(context),
+                      const SizedBox(height: 32),
+                      _buildTemplatesSection(context),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -555,4 +563,38 @@ class StartScreen extends StatelessWidget {
       ),
     ];
   }
+}
+
+class _DotBackgroundPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    const spacing = 32.0;
+
+    // Light grid lines
+    final gridPaint = Paint()
+      ..color = const Color(0xFFDDE1E7)
+      ..strokeWidth = 0.6
+      ..style = PaintingStyle.stroke;
+    for (double x = 0; x <= size.width; x += spacing) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+    }
+    for (double y = 0; y <= size.height; y += spacing) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
+    // Radial vignette: white and opaque at centre, fading to transparent at edges
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.longestSide * 0.72;
+    final shader = const RadialGradient(
+      colors: [Color(0xFFFFFFFF), Color(0x00FFFFFF)],
+      stops: [0.38, 1.0],
+    ).createShader(Rect.fromCircle(center: center, radius: radius));
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      Paint()..shader = shader,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_DotBackgroundPainter oldDelegate) => false;
 }
