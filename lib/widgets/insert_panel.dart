@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum InsertDragType { table, checklist, liveTime, liveDate, liveClock, timestamp }
+enum InsertDragType { table, checklist, liveTime, liveDate, liveClock, timestamp, image, file, link, video, doc, pdf }
 
 class InsertPanel extends StatefulWidget {
   final VoidCallback onImage;
@@ -45,13 +45,13 @@ class _InsertPanelState extends State<InsertPanel> {
 
   // (icon, label, color, onTap, dragType) — null dragType = tap-only
   List<(IconData, String, Color, VoidCallback, InsertDragType?)> get _mediaOptions => [
-    (Icons.image_outlined, 'Picture', const Color(0xFF43A047), widget.onImage, null),
+    (Icons.image_outlined, 'Picture', const Color(0xFF43A047), widget.onImage, InsertDragType.image),
     (Icons.table_chart_outlined, 'Table', const Color(0xFF1E88E5), widget.onTable, InsertDragType.table),
-    (Icons.attach_file_rounded, 'File', const Color(0xFFFB8C00), widget.onAttachment, null),
-    (Icons.link_rounded, 'Link', const Color(0xFF5E35B1), widget.onLink, null),
-    (Icons.play_circle_outline_rounded, 'Video', const Color(0xFFE53935), widget.onVideo, null),
-    (Icons.description_outlined, 'Doc', const Color(0xFFEF6C00), widget.onPrintout, null),
-    (Icons.picture_as_pdf_rounded, 'PDF', const Color(0xFFD32F2F), widget.onPdf, null),
+    (Icons.attach_file_rounded, 'File', const Color(0xFFFB8C00), widget.onAttachment, InsertDragType.file),
+    (Icons.link_rounded, 'Link', const Color(0xFF5E35B1), widget.onLink, InsertDragType.link),
+    (Icons.play_circle_outline_rounded, 'Video', const Color(0xFFE53935), widget.onVideo, InsertDragType.video),
+    (Icons.description_outlined, 'Doc', const Color(0xFFEF6C00), widget.onPrintout, InsertDragType.doc),
+    (Icons.picture_as_pdf_rounded, 'PDF', const Color(0xFFD32F2F), widget.onPdf, InsertDragType.pdf),
   ];
 
   List<(IconData, String, Color, VoidCallback, InsertDragType?)> get _widgetOptions => [
@@ -174,12 +174,7 @@ class _InsertPanelState extends State<InsertPanel> {
             ],
           ),
           const SizedBox(height: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 340),
-            child: SingleChildScrollView(
-              child: _tab == 0 ? _grid(_mediaOptions) : _grid(_widgetOptions),
-            ),
-          ),
+          _tab == 0 ? _grid(_mediaOptions) : _grid(_widgetOptions),
           const SizedBox(height: 10),
           InkWell(
             onTap: widget.onGenerate,

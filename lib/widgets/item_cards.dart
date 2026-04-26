@@ -556,3 +556,53 @@ class _DateTimeCardState extends State<DateTimeCard> {
     );
   }
 }
+
+// ── Placeholder card ───────────────────────────────────────────────────────
+
+class PlaceholderCard extends StatelessWidget {
+  final PlaceholderItem item;
+
+  const PlaceholderCard({super.key, required this.item});
+
+  static (IconData, String, Color) _meta(PlaceholderType t) => switch (t) {
+        PlaceholderType.image => (Icons.image_outlined, 'Picture', const Color(0xFF43A047)),
+        PlaceholderType.file  => (Icons.attach_file_rounded, 'File', const Color(0xFFFB8C00)),
+        PlaceholderType.link  => (Icons.link_rounded, 'Link', const Color(0xFF5E35B1)),
+        PlaceholderType.video => (Icons.play_circle_outline_rounded, 'Video', const Color(0xFFE53935)),
+        PlaceholderType.doc   => (Icons.description_outlined, 'Doc', const Color(0xFFEF6C00)),
+        PlaceholderType.pdf   => (Icons.picture_as_pdf_rounded, 'PDF', const Color(0xFFD32F2F)),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, label, color) = _meta(item.placeholderType);
+    return Container(
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(color.withAlpha(18), Colors.white),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withAlpha(80), width: 1.5),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 36, color: color.withAlpha(160)),
+              const SizedBox(height: 6),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: color.withAlpha(160))),
+              // Replace button is rendered as a live interactive overlay in
+              // whiteboard_screen.dart so it stays correctly positioned at all zoom levels.
+              const SizedBox(height: 36),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

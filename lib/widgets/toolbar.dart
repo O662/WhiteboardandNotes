@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/stroke.dart';
+import 'color_picker_panel.dart';
 
 class WhiteboardToolbar extends StatefulWidget {
   final DrawingTool selectedTool;
@@ -29,7 +30,7 @@ class WhiteboardToolbar extends StatefulWidget {
 }
 
 class _WhiteboardToolbarState extends State<WhiteboardToolbar> {
-  bool _showSizeSlider = false;
+  bool _showSizePanel = false;
 
   static const _quickColors = [
     Color(0xFF000000),
@@ -43,71 +44,12 @@ class _WhiteboardToolbarState extends State<WhiteboardToolbar> {
     Color(0xFFFFFFFF),
   ];
 
-  static const _paletteColors = [
-    Color(0xFF000000), Color(0xFF424242), Color(0xFF757575), Color(0xFFBDBDBD), Color(0xFFE0E0E0), Color(0xFFFFFFFF),
-    Color(0xFF8B0000), Color(0xFFE53935), Color(0xFFFF5252), Color(0xFFFF8A80), Color(0xFFEC407A), Color(0xFFF48FB1),
-    Color(0xFFE65100), Color(0xFFF57C00), Color(0xFFFFA000), Color(0xFFFFD600), Color(0xFFFFEE58), Color(0xFFFFF9C4),
-    Color(0xFF1B5E20), Color(0xFF43A047), Color(0xFF26A69A), Color(0xFF00BCD4), Color(0xFF4FC3F7), Color(0xFFB3E5FC),
-    Color(0xFF0D47A1), Color(0xFF1E88E5), Color(0xFF3F51B5), Color(0xFF7B1FA2), Color(0xFFE040FB), Color(0xFFEA80FC),
-  ];
-
   static const _sizePresets = [2.0, 5.0, 10.0, 18.0];
 
-  void _openPalette(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Color Palette',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _paletteColors
-                    .map((c) => GestureDetector(
-                          onTap: () {
-                            widget.onColorChanged(c);
-                            Navigator.pop(ctx);
-                          },
-                          child: Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: c,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: widget.selectedColor == c
-                                    ? Colors.blue
-                                    : Colors.grey.shade300,
-                                width: widget.selectedColor == c ? 2.5 : 1,
-                              ),
-                            ),
-                          ),
-                        ))
-                    .toList(),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _onSizePresetTap(double size) {
-    if (widget.strokeWidth == size) {
-      setState(() => _showSizeSlider = !_showSizeSlider);
-    } else {
-      widget.onStrokeWidthChanged(size);
-      setState(() => _showSizeSlider = false);
-    }
+  void _openColorPicker(BuildContext context) {
+    showColorPickerDialog(context, widget.selectedColor).then((picked) {
+      if (picked != null && mounted) widget.onColorChanged(picked);
+    });
   }
 
   @override
@@ -121,7 +63,7 @@ class _WhiteboardToolbarState extends State<WhiteboardToolbar> {
       (DrawingTool.text, Icons.title_rounded, 'Text'),
     ];
 
-    return Container(
+    final toolbar = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -168,7 +110,7 @@ class _WhiteboardToolbarState extends State<WhiteboardToolbar> {
           Tooltip(
             message: 'More colors',
             child: InkWell(
-              onTap: () => _openPalette(context),
+              onTap: () => _openColorPicker(context),
               borderRadius: BorderRadius.circular(8),
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 3),
@@ -192,30 +134,12 @@ class _WhiteboardToolbarState extends State<WhiteboardToolbar> {
             ),
           ),
           _divider(),
-          // Pen size presets — tap again to reveal slider
-          for (final size in _sizePresets)
-            _SizePreset(
-              size: size,
-              color: widget.selectedColor,
-              selected: widget.strokeWidth == size,
-              onTap: () => _onSizePresetTap(size),
-            ),
-          // Inline size slider — shown when user taps an already-selected preset
-          AnimatedSize(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeInOut,
-            child: _showSizeSlider
-                ? SizedBox(
-                    width: 100,
-                    child: Slider(
-                      value: widget.strokeWidth.clamp(1.0, 40.0),
-                      min: 1,
-                      max: 40,
-                      onChanged: widget.onStrokeWidthChanged,
-                      activeColor: Colors.blue,
-                    ),
-                  )
-                : const SizedBox.shrink(),
+          // Size button — opens dropdown panel below toolbar
+          _SizeBtn(
+            strokeWidth: widget.strokeWidth,
+            color: widget.selectedColor,
+            panelOpen: _showSizePanel,
+            onTap: () => setState(() => _showSizePanel = !_showSizePanel),
           ),
           _divider(),
           // Ruler
@@ -225,8 +149,29 @@ class _WhiteboardToolbarState extends State<WhiteboardToolbar> {
             onAddRuler: widget.onAddRuler,
             onClearRulers: widget.onClearRulers,
           ),
+          // Laser pointer
+          _ToolBtn(
+            icon: Icons.ads_click_rounded,
+            tooltip: 'Laser Pointer',
+            selected: widget.selectedTool == DrawingTool.laser,
+            onTap: () => widget.onToolChanged(DrawingTool.laser),
+          ),
         ],
       ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        toolbar,
+        if (_showSizePanel)
+          _SizePanelDropdown(
+            strokeWidth: widget.strokeWidth,
+            color: widget.selectedColor,
+            sizePresets: _sizePresets,
+            onChanged: widget.onStrokeWidthChanged,
+          ),
+      ],
     );
   }
 
@@ -600,6 +545,127 @@ class _ToolBtn extends StatelessWidget {
           child:
               Icon(icon, size: 20, color: selected ? Colors.blue : Colors.black87),
         ),
+      ),
+    );
+  }
+}
+
+class _SizeBtn extends StatelessWidget {
+  final double strokeWidth;
+  final Color color;
+  final bool panelOpen;
+  final VoidCallback onTap;
+
+  const _SizeBtn({
+    required this.strokeWidth,
+    required this.color,
+    required this.panelOpen,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dotSize = (strokeWidth * 0.9).clamp(3.0, 16.0);
+    return Tooltip(
+      message: 'Pen size',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: panelOpen ? Colors.blue.withAlpha(20) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: dotSize,
+                height: dotSize,
+                decoration: BoxDecoration(
+                  color: panelOpen ? Colors.blue : Colors.black87,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                panelOpen ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                size: 14,
+                color: panelOpen ? Colors.blue : Colors.black54,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SizePanelDropdown extends StatelessWidget {
+  final double strokeWidth;
+  final Color color;
+  final List<double> sizePresets;
+  final ValueChanged<double> onChanged;
+
+  const _SizePanelDropdown({
+    required this.strokeWidth,
+    required this.color,
+    required this.sizePresets,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(28),
+            blurRadius: 14,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final size in sizePresets)
+                _SizePreset(
+                  size: size,
+                  color: color,
+                  selected: strokeWidth == size,
+                  onTap: () => onChanged(size),
+                ),
+            ],
+          ),
+          SizedBox(
+            width: 180,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              ),
+              child: Slider(
+                value: strokeWidth.clamp(1.0, 40.0),
+                min: 1,
+                max: 40,
+                onChanged: onChanged,
+                activeColor: Colors.blue,
+              ),
+            ),
+          ),
+          Text(
+            '${strokeWidth.round()} px',
+            style: const TextStyle(fontSize: 11, color: Colors.black54),
+          ),
+        ],
       ),
     );
   }

@@ -146,6 +146,20 @@ sealed class WhiteboardItem {
             createdAt: DateTime.fromMillisecondsSinceEpoch(
                 json['createdAt'] as int? ?? 0),
           ),
+        'placeholder' => PlaceholderItem(
+            position: Offset((json['x'] as num).toDouble(),
+                (json['y'] as num).toDouble()),
+            placeholderType: PlaceholderType.values.firstWhere(
+                (t) => t.name == (json['placeholderType'] as String),
+                orElse: () => PlaceholderType.image),
+          ),
+        'recording' => RecordingItem(
+            position: Offset((json['x'] as num).toDouble(),
+                (json['y'] as num).toDouble()),
+            filePath: json['filePath'] as String?,
+            durationSeconds: json['durationSeconds'] as int? ?? 0,
+            label: json['label'] as String? ?? 'Recording',
+          ),
         _ => throw FormatException('Unknown item type: ${json['type']}'),
       };
 }
@@ -962,6 +976,81 @@ final class DateTimeItem extends WhiteboardItem {
         'mode': mode.name,
         'isLive': isLive,
         'createdAt': createdAt.millisecondsSinceEpoch,
+      };
+}
+
+// ── Placeholder item ───────────────────────────────────────────────────────
+
+enum PlaceholderType { image, file, link, video, doc, pdf }
+
+final class PlaceholderItem extends WhiteboardItem {
+  final Offset position;
+  final PlaceholderType placeholderType;
+
+  static double widthFor(PlaceholderType t) => 280.0;
+  static double heightFor(PlaceholderType t) => switch (t) {
+        PlaceholderType.file || PlaceholderType.link => 120.0,
+        _ => 200.0,
+      };
+
+  const PlaceholderItem({
+    required this.position,
+    required this.placeholderType,
+  });
+
+  @override
+  Rect get bounds => Rect.fromLTWH(
+      position.dx, position.dy, widthFor(placeholderType), heightFor(placeholderType));
+
+  @override
+  PlaceholderItem movedBy(Offset delta) =>
+      PlaceholderItem(position: position + delta, placeholderType: placeholderType);
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'placeholder',
+        'x': position.dx,
+        'y': position.dy,
+        'placeholderType': placeholderType.name,
+      };
+}
+
+final class RecordingItem extends WhiteboardItem {
+  final Offset position;
+  final String? filePath;
+  final int durationSeconds;
+  final String label;
+
+  static const double cardWidth = 240.0;
+  static const double cardHeight = 80.0;
+
+  const RecordingItem({
+    required this.position,
+    this.filePath,
+    this.durationSeconds = 0,
+    this.label = 'Recording',
+  });
+
+  @override
+  Rect get bounds =>
+      Rect.fromLTWH(position.dx, position.dy, cardWidth, cardHeight);
+
+  @override
+  RecordingItem movedBy(Offset delta) => RecordingItem(
+        position: position + delta,
+        filePath: filePath,
+        durationSeconds: durationSeconds,
+        label: label,
+      );
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'recording',
+        'x': position.dx,
+        'y': position.dy,
+        'filePath': filePath,
+        'durationSeconds': durationSeconds,
+        'label': label,
       };
 }
 

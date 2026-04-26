@@ -11,10 +11,16 @@ class WhiteboardLeftSidebar extends StatelessWidget {
   final VoidCallback onFrame;
   final VoidCallback onShape;
   final VoidCallback onStickyNote;
+  final VoidCallback onReview;
+  final VoidCallback onTools;
+  final VoidCallback onRecording;
   final bool mathPanelOpen;
   final bool framePanelOpen;
   final bool shapePanelOpen;
   final bool stickyNotePanelOpen;
+  final bool reviewPanelOpen;
+  final bool toolsPanelOpen;
+  final bool recordingPanelOpen;
 
   const WhiteboardLeftSidebar({
     super.key,
@@ -27,10 +33,16 @@ class WhiteboardLeftSidebar extends StatelessWidget {
     required this.onFrame,
     required this.onShape,
     required this.onStickyNote,
+    required this.onReview,
+    required this.onTools,
+    required this.onRecording,
     this.mathPanelOpen = false,
     this.framePanelOpen = false,
     this.shapePanelOpen = false,
     this.stickyNotePanelOpen = false,
+    this.reviewPanelOpen = false,
+    this.toolsPanelOpen = false,
+    this.recordingPanelOpen = false,
   });
 
   @override
@@ -53,10 +65,7 @@ class WhiteboardLeftSidebar extends StatelessWidget {
         children: [
           _SideBtn(icon: Icons.undo_rounded, tooltip: 'Undo (Ctrl+Z)', onTap: onUndo),
           _SideBtn(icon: Icons.redo_rounded, tooltip: 'Redo (Ctrl+Y)', onTap: onRedo),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-            child: Divider(height: 1),
-          ),
+          const _Divider(),
           _SideBtn(
             icon: Icons.crop_square_rounded,
             tooltip: 'Frame',
@@ -69,7 +78,6 @@ class WhiteboardLeftSidebar extends StatelessWidget {
             selected: stickyNotePanelOpen,
             onTap: onStickyNote,
           ),
-
           _SideBtn(
             icon: Icons.category_outlined,
             tooltip: 'Shape',
@@ -82,19 +90,44 @@ class WhiteboardLeftSidebar extends StatelessWidget {
             selected: mathPanelOpen,
             onTap: onMath,
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-            child: Divider(height: 1),
-          ),
           _SideBtn(
             icon: Icons.add_box_outlined,
             tooltip: 'Insert',
             onTap: onInsert,
           ),
+          const _Divider(),
+          _SideBtn(
+            icon: Icons.fact_check_outlined,
+            tooltip: 'Review',
+            selected: reviewPanelOpen,
+            onTap: onReview,
+          ),
+          _SideBtn(
+            icon: Icons.construction_rounded,
+            tooltip: 'Tools',
+            selected: toolsPanelOpen,
+            onTap: onTools,
+          ),
+          _SideBtn(
+            icon: Icons.mic_rounded,
+            tooltip: 'Recording',
+            selected: recordingPanelOpen,
+            onTap: onRecording,
+          ),
         ],
       ),
     );
   }
+}
+
+class _Divider extends StatelessWidget {
+  const _Divider();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+        child: Divider(height: 1),
+      );
 }
 
 class _SideBtn extends StatelessWidget {

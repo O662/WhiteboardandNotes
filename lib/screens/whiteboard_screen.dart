@@ -17,6 +17,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import '../models/stroke.dart';
+import '../utils/shape_recognizer.dart';
 import '../painters/whiteboard_painter.dart';
 import '../widgets/toolbar.dart';
 import '../widgets/left_sidebar.dart';
@@ -35,6 +36,10 @@ import '../widgets/item_cards.dart';
 import '../widgets/insert_dialogs.dart';
 import '../widgets/selection_hint.dart';
 import '../widgets/page_strip.dart';
+import '../widgets/review_panel.dart';
+import '../widgets/tools_panel.dart';
+import '../widgets/recording_panel.dart';
+import '../widgets/recording_card.dart';
 import '../models/whiteboard_page.dart';
 
 class WhiteboardScreen extends StatefulWidget {
@@ -82,11 +87,18 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   bool _showFramePanel = false;
   bool _showShapePanel = false;
   bool _showStickyNotePanel = false;
+  bool _showReviewPanel = false;
+  bool _showToolsPanel = false;
+  bool _showRecordingPanel = false;
 
   // Peel-from-stack state
   bool _isPeelingStack = false;
   Offset? _peelCanvasPos;
   Offset? _peelScreenPos;
+
+  Offset? _laserPos;
+  final List<Offset> _laserTrail = [];
+  Timer? _laserFadeTimer;
 
   double _textFontSize = 16.0;
   bool _textBold = false;
@@ -103,6 +115,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   final _inlineTextFocus = FocusNode();
   bool _suppressNextTextTap = false;
   Timer? _commitTimer;
+
+  // Shape-recognition hold state
+  Timer? _holdTimer;
+  Offset? _holdAnchorPos;
+  bool _strokeRecognized = false;
 
   bool _isPanning = false;
   bool _middleButtonPanning = false;
@@ -154,6 +171,8 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   void dispose() {
     _autosaveTimer?.cancel();
     _commitTimer?.cancel();
+    _holdTimer?.cancel();
+    _laserFadeTimer?.cancel();
     _transformationController.removeListener(_onTransform);
     _transformationController.dispose();
     _inlineTextFocus.removeListener(_onInlineTextFocusChange);
@@ -858,6 +877,48 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     } catch (_) {}
   }
 
+  Future<void> _renameBoard(String newName) async {
+    final sanitized = newName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (sanitized.isEmpty) return;
+    try {
+      if (Platform.isAndroid || Platform.isIOS) {
+        final dir = await getApplicationDocumentsDirectory();
+        final newPath = '${dir.path}/$sanitized.bord';
+        await File(newPath).writeAsString(jsonEncode(_boardData()));
+        if (_currentFilePath != null && _currentFilePath != newPath) {
+          try { await File(_currentFilePath!).delete(); } catch (_) {}
+        }
+        if (mounted) setState(() => _currentFilePath = newPath);
+      } else {
+        if (_currentFilePath != null) {
+          final oldFile = File(_currentFilePath!);
+          final newPath =
+              '${oldFile.parent.path}${Platform.pathSeparator}$sanitized.bord';
+          if (_currentFilePath != newPath) {
+            await oldFile.rename(newPath);
+            if (mounted) setState(() => _currentFilePath = newPath);
+          }
+        } else {
+          await _saveBoard();
+          return;
+        }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Board renamed'),
+              duration: Duration(seconds: 2)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rename failed: $e')),
+        );
+      }
+    }
+  }
+
   void _scheduleAutosave() {
     if (!_autosaveEnabled || _currentFilePath == null) return;
     _autosaveTimer?.cancel();
@@ -1270,6 +1331,9 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
     _showFramePanel = false;
     _showShapePanel = false;
     _showStickyNotePanel = false;
+    _showReviewPanel = false;
+    _showToolsPanel = false;
+    _showRecordingPanel = false;
   }
 
   void _showInsertMenu() {
@@ -1301,6 +1365,81 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   }
 
   void _closeStickyNotePanel() => setState(() => _showStickyNotePanel = false);
+
+  void _showReviewMenu() {
+    setState(() { final open = !_showReviewPanel; _closeAllPanels(); _showReviewPanel = open; });
+  }
+
+  void _closeReviewPanel() => setState(() => _showReviewPanel = false);
+
+  void _showToolsMenu() {
+    setState(() { final open = !_showToolsPanel; _closeAllPanels(); _showToolsPanel = open; });
+  }
+
+  void _closeToolsPanel() => setState(() => _showToolsPanel = false);
+
+  void _showRecordingMenu() {
+    setState(() { final open = !_showRecordingPanel; _closeAllPanels(); _showRecordingPanel = open; });
+  }
+
+  void _closeRecordingPanel() => setState(() => _showRecordingPanel = false);
+
+  void _addRecordingWidget() {
+    final center = _viewportCenter;
+    _addItem(RecordingItem(
+      position: center - const Offset(RecordingItem.cardWidth / 2, RecordingItem.cardHeight / 2),
+    ));
+    _closeRecordingPanel();
+  }
+
+  void _placeRecordingItem(RecordingDragData data, Offset screenPoint) {
+    final pos = _toCanvas(screenPoint);
+    _addItem(RecordingItem(
+      position: pos - const Offset(RecordingItem.cardWidth / 2, RecordingItem.cardHeight / 2),
+      filePath: data.filePath,
+      durationSeconds: data.durationSeconds,
+    ));
+  }
+
+  Future<void> _showPasswordDialog({required bool forDocument}) async {
+    final ctrl = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(forDocument ? 'Document Password' : 'Page Password'),
+        content: TextField(
+          controller: ctrl,
+          obscureText: true,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Password',
+            hintText: forDocument
+                ? 'Protects the entire document'
+                : 'Protects this page only',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(forDocument
+                      ? 'Document password set'
+                      : 'Page password set'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+            child: const Text('Set Password'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+  }
 
   Future<void> _configureAndInsertShape(ShapeType type) async {
     final result = await showShapeConfigDialog(context, type, _color, _strokeWidth);
@@ -1407,7 +1546,84 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
         final w = DateTimeItem.widthFor(DateTimeMode.datetime);
         final h = DateTimeItem.heightFor(DateTimeMode.datetime);
         _addItem(DateTimeItem(position: pos - Offset(w / 2, h / 2), mode: DateTimeMode.datetime, isLive: false, createdAt: DateTime.now()));
+      case InsertDragType.image:
+        _addItem(PlaceholderItem(
+          position: pos - Offset(PlaceholderItem.widthFor(PlaceholderType.image) / 2, PlaceholderItem.heightFor(PlaceholderType.image) / 2),
+          placeholderType: PlaceholderType.image,
+        ));
+      case InsertDragType.file:
+        _addItem(PlaceholderItem(
+          position: pos - Offset(PlaceholderItem.widthFor(PlaceholderType.file) / 2, PlaceholderItem.heightFor(PlaceholderType.file) / 2),
+          placeholderType: PlaceholderType.file,
+        ));
+      case InsertDragType.link:
+        _addItem(PlaceholderItem(
+          position: pos - Offset(PlaceholderItem.widthFor(PlaceholderType.link) / 2, PlaceholderItem.heightFor(PlaceholderType.link) / 2),
+          placeholderType: PlaceholderType.link,
+        ));
+      case InsertDragType.video:
+        _addItem(PlaceholderItem(
+          position: pos - Offset(PlaceholderItem.widthFor(PlaceholderType.video) / 2, PlaceholderItem.heightFor(PlaceholderType.video) / 2),
+          placeholderType: PlaceholderType.video,
+        ));
+      case InsertDragType.doc:
+        _addItem(PlaceholderItem(
+          position: pos - Offset(PlaceholderItem.widthFor(PlaceholderType.doc) / 2, PlaceholderItem.heightFor(PlaceholderType.doc) / 2),
+          placeholderType: PlaceholderType.doc,
+        ));
+      case InsertDragType.pdf:
+        _addItem(PlaceholderItem(
+          position: pos - Offset(PlaceholderItem.widthFor(PlaceholderType.pdf) / 2, PlaceholderItem.heightFor(PlaceholderType.pdf) / 2),
+          placeholderType: PlaceholderType.pdf,
+        ));
     }
+  }
+
+  static (IconData, String, Color) _placeholderMeta(PlaceholderType t) => switch (t) {
+        PlaceholderType.image => (Icons.image_outlined,         'Picture', const Color(0xFF43A047)),
+        PlaceholderType.file  => (Icons.attach_file_rounded,    'File',    const Color(0xFFFB8C00)),
+        PlaceholderType.link  => (Icons.link_rounded,           'Link',    const Color(0xFF5E35B1)),
+        PlaceholderType.video => (Icons.play_circle_outline_rounded, 'Video', const Color(0xFFE53935)),
+        PlaceholderType.doc   => (Icons.description_outlined,   'Doc',     const Color(0xFFEF6C00)),
+        PlaceholderType.pdf   => (Icons.picture_as_pdf_rounded, 'PDF',     const Color(0xFFD32F2F)),
+      };
+
+  Future<void> _replacePlaceholder(int index) async {
+    if (index >= _items.length || _items[index] is! PlaceholderItem) return;
+    final ph = _items[index] as PlaceholderItem;
+    final pos = ph.position;
+
+    switch (ph.placeholderType) {
+      case PlaceholderType.image:
+        final result = await FilePicker.platform.pickFiles(type: FileType.image);
+        if (!mounted || result == null || result.files.single.path == null) return;
+        setState(() => _items[index] = ImageItem(position: pos, path: result.files.single.path!));
+      case PlaceholderType.file:
+        final result = await FilePicker.platform.pickFiles();
+        if (!mounted || result == null || result.files.single.path == null) return;
+        setState(() => _items[index] = AttachmentItem(
+              position: pos, path: result.files.single.path!, filename: result.files.single.name));
+      case PlaceholderType.link:
+        final result = await showInsertLinkDialog(context);
+        if (!mounted || result == null) return;
+        setState(() => _items[index] = LinkItem(position: pos, url: result.url, label: result.label));
+      case PlaceholderType.video:
+        final result = await FilePicker.platform.pickFiles(type: FileType.video);
+        if (!mounted || result == null || result.files.single.path == null) return;
+        setState(() => _items[index] = VideoItem(
+              position: pos, path: result.files.single.path!, filename: result.files.single.name));
+      case PlaceholderType.doc:
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom, allowedExtensions: ['pdf', 'pptx', 'ppt', 'docx', 'doc']);
+        if (!mounted || result == null || result.files.single.path == null) return;
+        setState(() => _items[index] = PrintoutItem(
+              position: pos, path: result.files.single.path!, filename: result.files.single.name));
+      case PlaceholderType.pdf:
+        setState(() => _items.removeAt(index));
+        await _insertPdf();
+        return;
+    }
+    _scheduleAutosave();
   }
 
   Future<void> _insertImage() async {
@@ -1688,7 +1904,9 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               item is MathGraphItem ||
               item is ChecklistItem ||
               item is DateTimeItem ||
-              item is TextItem)
+              item is TextItem ||
+              item is PlaceholderItem ||
+              item is RecordingItem)
             _buildRichOverlayItem(item, index, matrix, scale),
       ],
     );
@@ -1747,6 +1965,14 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
         ),
       final DateTimeItem i => DateTimeCard(item: i),
       final TextItem i => _buildTextOverlayContent(i, scale),
+      final PlaceholderItem i => PlaceholderCard(item: i),
+      final RecordingItem i => RecordingCard(
+          item: i,
+          onUpdate: (updated) {
+            setState(() => _items[index] = updated);
+            _scheduleAutosave();
+          },
+        ),
       _ => const SizedBox.shrink(),
     };
 
@@ -1830,6 +2056,16 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       return;
     }
 
+    if (_tool == DrawingTool.laser) {
+      _laserFadeTimer?.cancel();
+      _laserFadeTimer = null;
+      setState(() {
+        _laserPos = event.position;
+        _laserTrail..clear()..add(event.position);
+      });
+      return;
+    }
+
     _suppressNextTextTap = false;
     if (_inlineTextCanvasPos != null) {
       _commitInlineText();
@@ -1901,6 +2137,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
           tool: _tool,
         );
       });
+      if (_tool == DrawingTool.pen) {
+        _holdAnchorPos = _downCanvasPos;
+        _strokeRecognized = false;
+        _startHoldTimer();
+      }
     }
   }
 
@@ -1944,6 +2185,18 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               _transformationController.value;
       return;
     }
+
+    if (_tool == DrawingTool.laser) {
+      _laserFadeTimer?.cancel();
+      _laserFadeTimer = null;
+      setState(() {
+        _laserPos = event.position;
+        _laserTrail.add(event.position);
+        while (_laserTrail.length > 28) { _laserTrail.removeAt(0); }
+      });
+      return;
+    }
+
     if (_isPanning) {
       if (_pointerCount >= 2) {
         _applyTwoFingerGesture(event);
@@ -1974,6 +2227,16 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
 
     if (_activeStroke == null) return;
     final pos = _toCanvas(event.position);
+
+    // Hold-to-recognize: restart the timer whenever the pen moves significantly.
+    if (_tool == DrawingTool.pen) {
+      if (_strokeRecognized) return; // locked — don't add more points
+      if (_holdAnchorPos != null && (pos - _holdAnchorPos!).distance > 8) {
+        _holdAnchorPos = pos;
+        _startHoldTimer();
+      }
+    }
+
     setState(() {
       if (_tool == DrawingTool.shape ||
           _tool == DrawingTool.frame ||
@@ -1991,6 +2254,10 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
   void _onPointerUp(PointerUpEvent event) {
     if (_middleButtonPanning) {
       setState(() => _middleButtonPanning = false);
+      return;
+    }
+    if (_tool == DrawingTool.laser) {
+      _startLaserFade();
       return;
     }
     if (_rightButtonPrevTool != null) {
@@ -2020,6 +2287,11 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       return;
     }
 
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    _holdAnchorPos = null;
+    _strokeRecognized = false;
+
     if (_activeStroke != null) {
       final s = _activeStroke!;
       setState(() => _activeStroke = null);
@@ -2039,6 +2311,10 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       setState(() => _middleButtonPanning = false);
       return;
     }
+    if (_tool == DrawingTool.laser) {
+      _startLaserFade();
+      return;
+    }
     if (_rightButtonPrevTool != null) {
       setState(() {
         _tool = _rightButtonPrevTool!;
@@ -2046,6 +2322,10 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       });
       return;
     }
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    _holdAnchorPos = null;
+    _strokeRecognized = false;
     _pointerPositions.remove(event.pointer);
     _pointerCount = (_pointerCount - 1).clamp(0, 10);
     setState(() {
@@ -2054,6 +2334,50 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       if (_pointerCount == 0) _isPanning = false;
     });
     _downCanvasPos = null;
+  }
+
+  // ── Laser fade ─────────────────────────────────────────────────────────────
+
+  void _startLaserFade() {
+    setState(() => _laserPos = null);
+    _laserFadeTimer?.cancel();
+    _laserFadeTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (!mounted || _laserTrail.isEmpty) {
+        _laserFadeTimer?.cancel();
+        _laserFadeTimer = null;
+        return;
+      }
+      setState(() {
+        final remove = (_laserTrail.length * 0.2).ceil().clamp(1, 4);
+        for (var i = 0; i < remove && _laserTrail.isNotEmpty; i++) {
+          _laserTrail.removeAt(0);
+        }
+      });
+    });
+  }
+
+  // ── Shape hold-recognition ─────────────────────────────────────────────────
+
+  void _startHoldTimer() {
+    _holdTimer?.cancel();
+    _holdTimer = Timer(const Duration(milliseconds: 800), _tryRecognizeShape);
+  }
+
+  void _tryRecognizeShape() {
+    if (!mounted || _activeStroke == null) return;
+    if (_tool != DrawingTool.pen) return;
+
+    final pts = _activeStroke!.points;
+    final shape = detectShape(pts);
+    if (shape == null) return;
+
+    final newPoints = generateShapePoints(shape, pts);
+    if (newPoints.isEmpty) return;
+
+    setState(() {
+      _activeStroke = _activeStroke!.copyWith(points: newPoints);
+      _strokeRecognized = true;
+    });
   }
 
   TextItem? _findTextItemAt(Offset canvasPos) {
@@ -2205,15 +2529,36 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               top: pad.top + 12,
               left: 16,
               child: BordLogo(
-              onHome: () => Navigator.maybePop(context),
-              onNew: _newBoard,
-              onOpen: _openBoard,
-              onSave: _saveBoard,
-              onClear: _clear,
-              autosaveEnabled: _autosaveEnabled,
-              onToggleAutosave: _toggleAutosave,
+                onHome: () => Navigator.maybePop(context),
+                onNew: _newBoard,
+                onOpen: _openBoard,
+                onSave: _saveBoard,
+                onClear: _clear,
+                autosaveEnabled: _autosaveEnabled,
+                onToggleAutosave: _toggleAutosave,
+                boardName: _currentFilePath
+                    ?.replaceAll('\\', '/')
+                    .split('/')
+                    .last
+                    .replaceAll('.bord', ''),
+                filePath: _currentFilePath,
+                onRename: _renameBoard,
+                onChangeSaveLocation: _saveBoard,
+              ),
             ),
-            ),
+
+            // ── Laser pointer trail ────────────────────────────────────────
+            if (_laserPos != null || _laserTrail.isNotEmpty)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _LaserTrailPainter(
+                      trail: _laserTrail,
+                      tipPos: _laserPos,
+                    ),
+                  ),
+                ),
+              ),
 
             // ── Main toolbar — top center ───────────────────────────────────
             Positioned(
@@ -2261,10 +2606,16 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                   onFrame: _showFrameMenu,
                   onShape: _showShapeMenu,
                   onStickyNote: _showStickyNoteMenu,
+                  onReview: _showReviewMenu,
+                  onTools: _showToolsMenu,
+                  onRecording: _showRecordingMenu,
                   mathPanelOpen: _showMathPanel,
                   framePanelOpen: _showFramePanel,
                   shapePanelOpen: _showShapePanel,
                   stickyNotePanelOpen: _showStickyNotePanel,
+                  reviewPanelOpen: _showReviewPanel,
+                  toolsPanelOpen: _showToolsPanel,
+                  recordingPanelOpen: _showRecordingPanel,
                 ),
               ),
             ),
@@ -2395,6 +2746,69 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
                   ),
                 );
               }),
+
+            // ── Placeholder Replace buttons (interactive, outside IgnorePointer) ──
+            AnimatedBuilder(
+              animation: _transformationController,
+              builder: (ctx, _) {
+                final matrix = _transformationController.value;
+                final scale = matrix.getMaxScaleOnAxis();
+                return Stack(
+                  children: [
+                    for (final (index, item) in _items.indexed)
+                      if (item is PlaceholderItem)
+                        Builder(builder: (_) {
+                          final ph = item;
+                          final (_, _, color) = _placeholderMeta(ph.placeholderType);
+                          final tl = MatrixUtils.transformPoint(matrix, ph.bounds.topLeft);
+                          final cardW = ph.bounds.width * scale;
+                          final cardH = ph.bounds.height * scale;
+                          // Hide when too small to interact with
+                          if (cardW < 48 || cardH < 40) return const SizedBox.shrink();
+                          // Button sized as a proportion of the card, clamped to readable range
+                          final btnW = (cardW * 0.55).clamp(64.0, 110.0);
+                          final btnH = (cardH * 0.22).clamp(22.0, 34.0);
+                          final btnLeft = tl.dx + (cardW - btnW) / 2;
+                          final btnTop = tl.dy + cardH - btnH - (cardH * 0.07).clamp(6.0, 14.0);
+                          return Positioned(
+                            left: btnLeft,
+                            top: btnTop,
+                            width: btnW,
+                            height: btnH,
+                            child: GestureDetector(
+                              onTap: () => _replacePlaceholder(index),
+                              child: Container(
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withAlpha(50),
+                                      blurRadius: 6,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    'Replace',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: (btnH * 0.42).clamp(9.0, 13.0),
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                  ],
+                );
+              },
+            ),
 
             // ── Math panel barrier + flyout ──────────────────────────────────
             if (_showMathPanel) ...[
@@ -2671,6 +3085,97 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               ),
             ],
 
+            // ── Review panel barrier + flyout ────────────────────────────────
+            if (_showReviewPanel) ...[
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
+                child: GestureDetector(
+                  onTap: _closeReviewPanel,
+                  behavior: HitTestBehavior.opaque,
+                ),
+              ),
+              Positioned(
+                left: 72,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: ReviewPanel(
+                    onSpellCheck: () {
+                      _closeReviewPanel();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Spell check coming soon'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                    onThesaurus: () {
+                      _closeReviewPanel();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Thesaurus coming soon'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                    onPagePassword: () {
+                      _closeReviewPanel();
+                      _showPasswordDialog(forDocument: false);
+                    },
+                    onDocPassword: () {
+                      _closeReviewPanel();
+                      _showPasswordDialog(forDocument: true);
+                    },
+                  ),
+                ),
+              ),
+            ],
+
+            // ── Tools panel barrier + flyout ─────────────────────────────────
+            if (_showToolsPanel) ...[
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
+                child: GestureDetector(
+                  onTap: _closeToolsPanel,
+                  behavior: HitTestBehavior.opaque,
+                ),
+              ),
+              Positioned(
+                left: 72,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: ToolsPanel(
+                    selectedTool: _tool,
+                    onToolChanged: (t) { _closeToolsPanel(); _changeTool(t); },
+                    onAddRuler: () => _rulerKey.currentState?.addRuler(),
+                    onClearRulers: () => _rulerKey.currentState?.clearRulers(),
+                  ),
+                ),
+              ),
+            ],
+
+            // ── Recording panel barrier + flyout ─────────────────────────────
+            if (_showRecordingPanel) ...[
+              Positioned(
+                left: 64, top: 0, right: 0, bottom: 0,
+                child: GestureDetector(
+                  onTap: _closeRecordingPanel,
+                  behavior: HitTestBehavior.opaque,
+                ),
+              ),
+              Positioned(
+                left: 72,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: RecordingPanel(
+                    onAddWidget: _addRecordingWidget,
+                  ),
+                ),
+              ),
+            ],
+
             // ── Drop targets (above panels so barriers don't block them) ────
             Positioned.fill(
               child: DragTarget<MathGraphType>(
@@ -2741,6 +3246,25 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
               ),
             ),
 
+            // ── Drag-target for recording panel drops ────────────────────────
+            Positioned.fill(
+              child: DragTarget<RecordingDragData>(
+                onAcceptWithDetails: (details) {
+                  _placeRecordingItem(details.data, details.offset);
+                  _closeRecordingPanel();
+                },
+                builder: (ctx, candidateData, _) => IgnorePointer(
+                  ignoring: candidateData.isEmpty,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    color: candidateData.isNotEmpty
+                        ? Colors.green.withAlpha(12)
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
+
             // ── Drag-target for sticky note panel drops ──────────────────────
             Positioned.fill(
               child: DragTarget<StickyNotePickData>(
@@ -2764,4 +3288,49 @@ class _WhiteboardScreenState extends State<WhiteboardScreen> {
       ),
     );
   }
+}
+
+class _LaserTrailPainter extends CustomPainter {
+  final List<Offset> trail;
+  final Offset? tipPos;
+
+  const _LaserTrailPainter({required this.trail, this.tipPos});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final all = [...trail, ?tipPos];
+    if (all.length >= 2) {
+      for (var i = 1; i < all.length; i++) {
+        final t = i / (all.length - 1);
+        canvas.drawLine(
+          all[i - 1],
+          all[i],
+          Paint()
+            ..color = Color.fromARGB((t * 210).round(), 255, 30, 30)
+            ..strokeWidth = 2 + t * 8
+            ..strokeCap = StrokeCap.round,
+        );
+      }
+    }
+    if (tipPos != null) {
+      // outer glow
+      canvas.drawCircle(tipPos!, 18,
+          Paint()
+            ..color = const Color(0x33FF1E1E)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+      // inner glow
+      canvas.drawCircle(tipPos!, 10,
+          Paint()
+            ..color = const Color(0x88FF2010)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5));
+      // core
+      canvas.drawCircle(tipPos!, 5, Paint()..color = const Color(0xFFFF2010));
+      // bright centre
+      canvas.drawCircle(tipPos!, 2, Paint()..color = const Color(0xFFFFFFFF));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LaserTrailPainter old) =>
+      old.trail != trail || old.tipPos != tipPos;
 }

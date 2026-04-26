@@ -38,25 +38,10 @@ class WhiteboardBottomBar extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Background style toggle
-          Tooltip(
-            message: 'Background: ${backgroundStyle.name}',
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () {
-                final next = BackgroundStyle.values[
-                    (backgroundStyle.index + 1) % BackgroundStyle.values.length];
-                onBackgroundStyleChanged(next);
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(5),
-                child: Icon(_bgIcon(backgroundStyle),
-                    size: 18,
-                    color: backgroundStyle != BackgroundStyle.blank
-                        ? Colors.blue
-                        : Colors.black54),
-              ),
-            ),
+          // Background style drop-up
+          _BgDropUpBtn(
+            backgroundStyle: backgroundStyle,
+            onChanged: onBackgroundStyleChanged,
           ),
           const SizedBox(width: 4),
           Container(width: 1, height: 18, color: Colors.grey.shade300),
@@ -103,12 +88,6 @@ class WhiteboardBottomBar extends StatelessWidget {
     );
   }
 
-  IconData _bgIcon(BackgroundStyle s) => switch (s) {
-        BackgroundStyle.blank => Icons.crop_square_rounded,
-        BackgroundStyle.dots => Icons.grain_rounded,
-        BackgroundStyle.grid => Icons.grid_on_rounded,
-      };
-
   void _showHelp(BuildContext context) {
     showDialog(
       context: context,
@@ -128,6 +107,88 @@ class WhiteboardBottomBar extends StatelessWidget {
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text('Close'))
         ],
+      ),
+    );
+  }
+}
+
+class _BgDropUpBtn extends StatelessWidget {
+  final BackgroundStyle backgroundStyle;
+  final ValueChanged<BackgroundStyle> onChanged;
+
+  const _BgDropUpBtn({required this.backgroundStyle, required this.onChanged});
+
+  static const _options = [
+    (BackgroundStyle.blank, Icons.crop_square_rounded, 'Blank'),
+    (BackgroundStyle.dots, Icons.grain_rounded, 'Dots'),
+    (BackgroundStyle.grid, Icons.grid_on_rounded, 'Grid'),
+  ];
+
+  Future<void> _showMenu(BuildContext ctx) async {
+    final box = ctx.findRenderObject()! as RenderBox;
+    final overlay = Overlay.of(ctx).context.findRenderObject()! as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        box.localToGlobal(Offset.zero, ancestor: overlay),
+        box.localToGlobal(box.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+    final result = await showMenu<BackgroundStyle>(
+      context: ctx,
+      position: position,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      elevation: 4,
+      color: Colors.white,
+      items: [
+        for (final (style, icon, label) in _options)
+          PopupMenuItem(
+            value: style,
+            child: Row(children: [
+              Icon(icon,
+                  size: 18,
+                  color: backgroundStyle == style ? Colors.blue : Colors.black87),
+              const SizedBox(width: 10),
+              Text(label,
+                  style: TextStyle(
+                      color: backgroundStyle == style ? Colors.blue : Colors.black87,
+                      fontWeight: backgroundStyle == style
+                          ? FontWeight.w600
+                          : FontWeight.normal)),
+            ]),
+          ),
+      ],
+    );
+    if (result != null) onChanged(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = switch (backgroundStyle) {
+      BackgroundStyle.blank => Icons.crop_square_rounded,
+      BackgroundStyle.dots => Icons.grain_rounded,
+      BackgroundStyle.grid => Icons.grid_on_rounded,
+    };
+    return Tooltip(
+      message: 'Background',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _showMenu(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon,
+                  size: 18,
+                  color: backgroundStyle != BackgroundStyle.blank
+                      ? Colors.blue
+                      : Colors.black54),
+              const SizedBox(width: 2),
+              const Icon(Icons.expand_less_rounded, size: 13, color: Colors.black45),
+            ],
+          ),
+        ),
       ),
     );
   }

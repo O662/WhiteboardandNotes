@@ -56,7 +56,9 @@ class WhiteboardPainter extends CustomPainter {
               PrintoutItem() ||
               MathGraphItem() ||
               ChecklistItem() ||
-              DateTimeItem():
+              DateTimeItem() ||
+              PlaceholderItem() ||
+              RecordingItem():
           break; // rendered as Flutter widget in the rich-item overlay
       }
     }

@@ -1,6 +1,6 @@
 import 'dart:ui';
 
-enum DrawingTool { pan, pen, highlighter, eraser, select, lassoSelect, rectSelect, ruler, shape, frame, stickyNote, text, math, strokeEraser, lineDelete }
+enum DrawingTool { pan, pen, highlighter, eraser, select, lassoSelect, rectSelect, ruler, shape, frame, stickyNote, text, math, strokeEraser, lineDelete, laser }
 
 class Stroke {
   final List<Offset> points;

@@ -40,6 +40,8 @@ dependencies:
   pdfrx: ^1.0.0
   share_plus: ^12.0.2
   pdf: ^3.12.0
+  record: ^6.0.0
+
 
 dev_dependencies:
   flutter_test:
